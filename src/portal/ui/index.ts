@@ -15,3 +15,6 @@ export * from './icon';
 export * from './nav';
 export * from './overlay';
 export * from './table';
+export * from './chat';
+export * from './composer';
+export * from './helpdesk';

@@ -56,26 +56,26 @@ const {ask, gateways} = Astro.props;
   .checkout-ask {
     display: grid;
     justify-items: start;
-    gap: 0.75rem;
-    margin-bottom: 1rem;
+    gap: var(--space-3);
+    margin-bottom: var(--space-4);
   }
   .checkout-ways {
     display: grid;
-    gap: 0.5rem;
+    gap: var(--space-2);
     margin: 0;
     padding: 0;
     border: 0;
     width: 100%;
   }
   .checkout-ways legend {
-    margin-bottom: 0.5rem;
-    font-weight: 600;
+    margin-bottom: var(--space-2);
+    font-weight: var(--weight-semibold);
   }
   .checkout-way {
     display: flex;
     align-items: center;
-    gap: 0.6rem;
-    padding: 0.75rem 1rem;
+    gap: var(--space-2);
+    padding: var(--space-3) var(--space-4);
     border: 1px solid var(--line, currentColor);
     border-radius: var(--radius);
     cursor: pointer;

@@ -143,20 +143,20 @@ const message = error ? (MESSAGES[error.toLowerCase()] ?? 'Checkout did not open
   /* The island's way-to-pay list (the no-JavaScript form styles its own). */
   :global(.embedded-checkout .checkout-ways) {
     display: grid;
-    gap: 0.5rem;
-    margin: 0 0 1rem;
+    gap: var(--space-2);
+    margin: 0 0 var(--space-4);
     padding: 0;
     border: 0;
   }
   :global(.embedded-checkout .checkout-ways legend) {
-    margin-bottom: 0.5rem;
-    font-weight: 600;
+    margin-bottom: var(--space-2);
+    font-weight: var(--weight-semibold);
   }
   :global(.embedded-checkout .checkout-way) {
     display: flex;
     align-items: center;
-    gap: 0.6rem;
-    padding: 0.75rem 1rem;
+    gap: var(--space-2);
+    padding: var(--space-3) var(--space-4);
     border: 1px solid var(--line, currentColor);
     border-radius: var(--radius);
     cursor: pointer;

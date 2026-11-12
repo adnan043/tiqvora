@@ -1,11 +1,18 @@
 import {useState} from 'react';
 
 import {
+  ArticleEditor,
   Badge,
   BarChart,
   Button,
   Card,
+  ChatMessage,
   Checkbox,
+  CitationList,
+  Composer,
+  type ComposerMode,
+  ConfidenceBadge,
+  ConversationListItem,
   type Column,
   DataTable,
   DefinitionList,
@@ -33,10 +40,14 @@ import {
   StatusBadge,
   Switch,
   Tabs,
+  TicketMeta,
+  TimelineEvent,
   useConfirm,
   useForm,
   useToast,
 } from '../ui';
+import type {TicketStatus} from '../../lib/helpdesk-tones';
+import {ago} from '../shared';
 
 /**
  * `/components`: the UI kit on one screen, DEV ONLY (the Preview and
@@ -57,7 +68,7 @@ const STATUS_TONES = {active: 'success', trial: 'info', overdue: 'warning'} as c
 export function Components() {
   const toast = useToast();
   const confirm = useConfirm();
-  const [tab, setTab] = useState<'buttons' | 'forms' | 'data' | 'feedback' | 'icons'>('buttons');
+  const [tab, setTab] = useState<'buttons' | 'forms' | 'data' | 'feedback' | 'helpdesk' | 'icons'>('buttons');
 
   return (
     <div className="app-page">
@@ -81,12 +92,14 @@ export function Components() {
           {value: 'forms', label: 'Forms'},
           {value: 'data', label: 'Data'},
           {value: 'feedback', label: 'States'},
+          {value: 'helpdesk', label: 'Help desk'},
           {value: 'icons', label: 'Icons & colours', count: ICON_NAMES.length},
         ]}>
         {tab === 'buttons' && <ButtonsDemo onToast={toast.success} confirm={confirm} />}
         {tab === 'forms' && <FormsDemo onSaved={() => toast.success('Saved.')} />}
         {tab === 'data' && <DataDemo />}
         {tab === 'feedback' && <FeedbackDemo />}
+        {tab === 'helpdesk' && <HelpdeskKitDemo />}
         {tab === 'icons' && <IconsDemo />}
       </Tabs>
     </div>
@@ -415,6 +428,235 @@ function IconsDemo() {
           ))}
         </div>
       </Card>
+    </div>
+  );
+}
+
+/* ---------- help desk pieces (src/portal/ui/chat.tsx, composer.tsx, helpdesk.tsx) ---------- */
+
+const DEMO_CONVERSATIONS = [
+  {
+    id: 1042,
+    customerName: 'Maya Okafor',
+    subject: 'Grinder arrived with a cracked hopper',
+    preview: 'Hi, the burr grinder from order NW-20931 came today and the hopper lid is cracked along one side.',
+    minutesAgo: 4,
+    status: 'waiting',
+    priority: 'high',
+    unread: true,
+  },
+  {
+    id: 1039,
+    customerName: 'Tomás Lindqvist',
+    subject: 'Change my subscription to every 3 weeks',
+    preview: 'Thanks! Could you also swap the Ethiopia Guji for the house blend next time?',
+    minutesAgo: 95,
+    status: 'open',
+    priority: 'normal',
+    unread: false,
+  },
+  {
+    id: 1031,
+    customerName: 'Priya Raman',
+    subject: 'Refund for a double charge',
+    preview: 'I can see two charges of $18.50 on 4 Nov for the same order.',
+    minutesAgo: 60 * 26,
+    status: 'pending',
+    priority: 'urgent',
+    unread: false,
+  },
+  {
+    id: 1017,
+    customerName: 'Jordan Ellis',
+    subject: 'Which beans for a moka pot?',
+    preview: 'Perfect, the Morning Roast works great. Thank you!',
+    minutesAgo: 60 * 24 * 3,
+    status: 'solved',
+    priority: 'low',
+    unread: false,
+  },
+] as const;
+
+function ConversationListDemo() {
+  const [selected, setSelected] = useState<number>(1042);
+  // Worked out once, not on every render.
+  const [rows] = useState(() => DEMO_CONVERSATIONS.map(c => ({...c, at: new Date(Date.now() - c.minutesAgo * 60_000).toISOString()})));
+  return (
+    <div role="list" aria-label="Tickets">
+      {rows.map(c => (
+        <div role="listitem" key={c.id}>
+          <ConversationListItem
+            customerName={c.customerName}
+            subject={c.subject}
+            preview={c.preview}
+            number={c.id}
+            lastMessageAt={c.at}
+            ageLabel={ago(c.at)}
+            status={c.status}
+            priority={c.priority}
+            unread={c.unread}
+            selected={selected === c.id}
+            onSelect={() => setSelected(c.id)}
+          />
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function ComposerDemo() {
+  const toast = useToast();
+  const [pending, setPending] = useState(false);
+  const [error, setError] = useState<string>();
+  const [mode, setMode] = useState<ComposerMode>('reply');
+  const send = async (text: string, how: ComposerMode) => {
+    setPending(true);
+    setError(undefined);
+    try {
+      await new Promise(resolve => setTimeout(resolve, 900));
+      if (text.toLowerCase().includes('fail')) {
+        const message = 'That message did not send. Check your connection and try again.';
+        setError(message);
+        throw new Error(message);
+      }
+      toast.success(how === 'note' ? 'Note added.' : 'Reply sent.');
+    } finally {
+      setPending(false);
+    }
+  };
+  return (
+    <div className="form-stack">
+      <Composer
+        label="Reply to Maya Okafor"
+        placeholder="We're sorry about the hopper, we'll send a new lid today."
+        modes
+        mode={mode}
+        onModeChange={setMode}
+        pending={pending}
+        error={error}
+        maxLength={600}
+        hint="Enter sends, Shift+Enter adds a line. Type “fail” to see an error."
+        onSend={send}
+      />
+      <Composer label="Your message" placeholder="Ask about your order…" disabled onSend={async () => {}} hint="Disabled: the ticket is closed." />
+    </div>
+  );
+}
+
+const SAMPLE_ARTICLE = `## Descaling your Northwind grinder
+
+Coffee oils build up in the burrs over time. Clean them every 4 weeks.
+
+1. Unplug the grinder and empty the hopper.
+2. Run a cup of grinder-cleaning tablets through it.
+3. Grind 20 g of old beans to clear the residue.`;
+
+function HelpdeskDemo() {
+  const [status, setStatus] = useState<TicketStatus>('pending');
+  const form = useForm({body: SAMPLE_ARTICLE}, {body: [rules.required('Write the article before you save it.')]});
+  return (
+    <>
+      <Card title="Ticket details" description="TicketMeta: read-only rows, or a control in place for viewers who can change them.">
+        <TicketMeta
+          number={1042}
+          status={status}
+          priority="high"
+          assignee="Priya Raman"
+          customer={{name: 'Daniel Okafor', detail: 'Customer since March'}}
+          created="12 Nov, 09:14"
+          controls={{
+            status: (
+              <Select
+                aria-label="Ticket status"
+                value={status}
+                onChange={event => setStatus(event.target.value as TicketStatus)}
+                options={[
+                  {value: 'waiting', label: 'Waiting on us'},
+                  {value: 'open', label: 'Open'},
+                  {value: 'pending', label: 'Pending'},
+                  {value: 'solved', label: 'Solved'},
+                ]}
+              />
+            ),
+          }}
+          extra={[{label: 'Page', value: '/help/articles/descaling-your-grinder/'}]}
+        />
+      </Card>
+      <Card title="Article editor" description="ArticleEditor: Markdown with Write / Preview tabs and a character count.">
+        <form noValidate onSubmit={form.submit(() => undefined)}>
+          <ArticleEditor
+            label="Article body"
+            hint="Markdown: ## for headings, 1. for steps."
+            {...form.field('body')}
+            error={form.error('body')}
+            renderPreview={markdown =>
+              markdown
+                .split(/\n{2,}/)
+                .map((block, i) => <p key={i} className="kit-preview-block">{block}</p>)
+            }
+          />
+          <div className="form-actions">
+            <Button type="submit">Save article</Button>
+          </div>
+        </form>
+      </Card>
+    </>
+  );
+}
+
+function HelpdeskKitDemo() {
+  return (
+    <div className="kit-section">
+      <Card title="Conversation" description="ChatMessage (customer, ai, agent, note), TimelineEvent, CitationList and ConfidenceBadge.">
+        <div className="chat-thread">
+          <ChatMessage sender="customer" author="Jordan Lee" time="10:02">
+            Hi! My Northwind subscription box arrived with the wrong grind. Can I swap it for whole bean?
+          </ChatMessage>
+          <ChatMessage
+            sender="ai"
+            author="Northwind Assistant"
+            time="10:02"
+            footer={
+              <>
+                <CitationList
+                  items={[
+                    {title: 'Changing your grind size', href: '/help/articles/changing-your-grind-size/'},
+                    {title: 'Returns and replacements', href: '/help/articles/returns-and-replacements/'},
+                  ]}
+                />
+                <div className="toolbar">
+                  <ConfidenceBadge confidence="medium" />
+                </div>
+              </>
+            }
+          >
+            Yes. You can change the grind for your next box under Subscription › Preferences [1]. For a box that already
+            arrived with the wrong grind, we send a free replacement within 30 days [2].
+          </ChatMessage>
+          <TimelineEvent time="10:05">Handed off to the team · Ticket #1042 opened</TimelineEvent>
+          <ChatMessage sender="note" author="Sam Rivera" time="10:07">
+            Checked the order: packing slip says whole bean, so this was our mistake. Replacing at no charge.
+          </ChatMessage>
+          <TimelineEvent time="10:08">Assigned to Sam Rivera</TimelineEvent>
+          <ChatMessage sender="agent" author="Sam Rivera" time="10:09">
+            Sorry about that, Jordan! A whole-bean replacement ships today, and your next box is set to whole bean too.
+          </ChatMessage>
+          <TimelineEvent time="10:15">Status changed to Solved</TimelineEvent>
+        </div>
+        <div className="toolbar">
+          <ConfidenceBadge confidence="high" />
+          <ConfidenceBadge confidence="medium" />
+          <ConfidenceBadge confidence="low" />
+          <ConfidenceBadge confidence="none" />
+        </div>
+      </Card>
+      <Card title="Conversations" description="ConversationListItem: one ticket in the inbox list." flush>
+        <ConversationListDemo />
+      </Card>
+      <Card title="Composer" description="Grows to six lines, then scrolls. Clears only after the send succeeds; a note sits on the warning fill.">
+        <ComposerDemo />
+      </Card>
+      <HelpdeskDemo />
     </div>
   );
 }

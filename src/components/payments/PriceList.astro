@@ -59,7 +59,7 @@ const every = (p: Price) => {
   .price-list {
     display: grid;
     grid-template-columns: repeat(auto-fit, minmax(min(100%, 16rem), 1fr));
-    gap: 1rem;
+    gap: var(--space-4);
     margin: 0;
     padding: 0;
     list-style: none;
@@ -67,8 +67,8 @@ const every = (p: Price) => {
   .price-card {
     display: grid;
     align-content: start;
-    gap: 0.5rem;
-    padding: 1.25rem;
+    gap: var(--space-2);
+    padding: var(--space-5);
     border: 1px solid var(--line, currentColor);
     border-radius: var(--radius);
   }
@@ -80,15 +80,17 @@ const every = (p: Price) => {
     margin: 0;
   }
   .price-amount {
-    font-size: 1.5rem;
-    font-weight: 700;
+    font-size: var(--text-2xl);
+    line-height: var(--leading-2xl);
+    font-weight: var(--weight-bold);
   }
   .price-every,
   .price-description,
   .price-trial,
   .price-soon {
     color: var(--muted);
-    font-size: 0.95rem;
-    font-weight: 400;
+    font-size: var(--text-md);
+    line-height: var(--leading-md);
+    font-weight: var(--weight-regular);
   }
 </style>
