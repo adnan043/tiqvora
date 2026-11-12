@@ -1,0 +1,253 @@
+---
+/**
+ * Help-center search, `/help/search/?q=…`: a PRERENDERED shell (served as a file, no Worker work)
+ * whose results come from `GET /site-api/kb/search?q=` as JSON, built in the browser with
+ * `textContent` (nothing from the answer is parsed as HTML). The query lives in the URL, so a
+ * search is a real link and back / forward work.
+ *
+ * States: no query yet (a prompt), loading (skeleton rows), results, no match, too many
+ * searches (429: the route's words, in place) and an error with Try again.
+ *
+ * `noindex`: a results page is not content (the articles themselves are in /sitemap.xml).
+ */
+import '../../../styles/help.css';
+
+import Base from '../../../layouts/Base.astro';
+import {KB_LIMITS} from '../../../lib/kb-types';
+import {Icon} from '../../../portal/ui/icon';
+import {staticContext} from '../../../server/page';
+
+export const prerender = true;
+
+const {site, viewer} = await staticContext(Astro.request);
+---
+
+<Base site={site} viewer={viewer} isStatic noindex title="Search the help center" description="Search every help-center article.">
+  <main id="main" tabindex="-1" class="help help-search-page wrap narrow" data-help-search-page>
+    <nav class="help-breadcrumb" aria-label="Breadcrumb">
+      <ol>
+        <li><a href="/help/">Help center</a></li>
+        <li aria-current="page">Search</li>
+      </ol>
+    </nav>
+    <h1>Search the help center</h1>
+
+    <form class="help-search" action="/help/search/" method="get" role="search" novalidate data-search-form>
+      <label class="help-search-label" for="help-search-q">What do you need help with?</label>
+      <div class="help-search-box" data-search-box>
+        <Icon name="search" size={20} />
+        <input
+          id="help-search-q"
+          type="search"
+          name="q"
+          maxlength={KB_LIMITS.searchQuery}
+          autocomplete="off"
+          enterkeyhint="search"
+          placeholder="e.g. my order hasn’t arrived"
+          aria-describedby="help-search-error"
+          data-search-input
+        />
+        <button class="button" type="submit" data-search-submit>Search</button>
+      </div>
+      <p class="help-search-error" id="help-search-error" data-search-error hidden></p>
+    </form>
+
+    <p class="help-results-summary" role="status" aria-live="polite" data-search-summary></p>
+
+    <div class="list-skeleton help-skeleton" data-search-skeleton aria-hidden="true" hidden>
+      {Array.from({length: 4}, () => <div class="list-skeleton-row"><span /><span /></div>)}
+    </div>
+    <noscript><p class="notice">Turn on JavaScript to search the help center, or <a href="/help/">browse the topics</a>.</p></noscript>
+
+    <ul class="help-list" data-search-results hidden></ul>
+
+    <div class="help-empty" data-search-prompt hidden>
+      <strong>Search every article</strong>
+      <p>Type a few words about your question, like “refund” or “change my address”.</p>
+      <a class="button button-secondary" href="/help/">Browse topics</a>
+    </div>
+
+    <div class="help-empty" data-search-none hidden>
+      <strong>No articles match your search</strong>
+      <p>Try other words, or fewer of them. You can also browse the topics.</p>
+      <a class="button button-secondary" href="/help/">Browse topics</a>
+    </div>
+
+    <div class="help-error" role="alert" data-search-failed hidden>
+      <p data-search-failed-text>Search is not available right now.</p>
+      <button class="button button-secondary" type="button" data-search-retry>Try again</button>
+    </div>
+
+    <template data-search-hit>
+      <li>
+        <a class="help-row" data-href>
+          <span class="help-row-text">
+            <span class="help-row-title" data-title></span>
+            <span class="help-row-meta" data-category></span>
+            <span class="help-row-snippet" data-snippet></span>
+          </span>
+          <Icon name="chevron-right" size={18} />
+        </a>
+      </li>
+    </template>
+  </main>
+</Base>
+
+<script>
+  import type {KbSearchResult} from '../../../lib/kb-types';
+  import {siteFetch} from '../../../platform/browser';
+
+  const MIN = 2;
+  const MAX = 120;
+
+  document.addEventListener('astro:page-load', () => {
+    const root = document.querySelector<HTMLElement>('[data-help-search-page]');
+    if (!root || root.dataset.bound) return;
+    root.dataset.bound = '1';
+
+    const part = <T extends HTMLElement>(name: string) => root.querySelector<T>(`[data-search-${name}]`)!;
+    const form = part<HTMLFormElement>('form');
+    const box = part('box');
+    const input = part<HTMLInputElement>('input');
+    const submit = part<HTMLButtonElement>('submit');
+    const error = part('error');
+    const summary = part('summary');
+    const skeleton = part('skeleton');
+    const results = part('results');
+    const prompt = part('prompt');
+    const none = part('none');
+    const failed = part('failed');
+    const failedText = part('failed-text');
+    const template = root.querySelector<HTMLTemplateElement>('template[data-search-hit]')!;
+    const stop = new AbortController();
+    let current: AbortController | null = null;
+    let tried = false;
+
+    const queryOf = () => (new URLSearchParams(location.search).get('q') ?? '').trim().slice(0, MAX);
+
+    /** The field's error, in words that say how to fix it; shown on submit, then live while typing. */
+    const check = (): boolean => {
+      const q = input.value.trim();
+      const message = q.length < MIN ? `Type at least ${MIN} characters to search.` : '';
+      error.textContent = message;
+      error.hidden = !message;
+      if (message) {
+        input.setAttribute('aria-invalid', 'true');
+        box.dataset.invalid = '';
+      } else {
+        input.removeAttribute('aria-invalid');
+        delete box.dataset.invalid;
+      }
+      return !message;
+    };
+
+    // The button while a search runs: a spinner, "Searching…", disabled (one search at a time).
+    const pending = (on: boolean) => {
+      submit.disabled = on;
+      if (on) {
+        const spinner = document.createElement('span');
+        spinner.className = 'spinner';
+        spinner.setAttribute('aria-hidden', 'true');
+        submit.replaceChildren(spinner, document.createTextNode('Searching…'));
+        submit.setAttribute('aria-busy', 'true');
+        results.setAttribute('aria-busy', 'true');
+      } else {
+        submit.textContent = 'Search';
+        submit.removeAttribute('aria-busy');
+        results.removeAttribute('aria-busy');
+      }
+    };
+
+    async function run(): Promise<void> {
+      current?.abort();
+      const q = queryOf();
+      input.value = q;
+      for (const el of [results, prompt, none, failed]) el.hidden = true;
+      results.replaceChildren();
+      summary.textContent = '';
+      if (q.length < MIN) {
+        skeleton.hidden = true;
+        pending(false);
+        prompt.hidden = false;
+        return;
+      }
+      const request = (current = new AbortController());
+      const signal = AbortSignal.any([request.signal, stop.signal]);
+      skeleton.hidden = false;
+      pending(true);
+      try {
+        const res = await siteFetch(`/site-api/kb/search?q=${encodeURIComponent(q)}`, {headers: {accept: 'application/json'}, signal});
+        if (res.status === 429) {
+          const body = (await res.json().catch(() => null)) as {message?: string} | null;
+          throw new Error(body?.message || 'Too many searches right now. Try again in a minute.');
+        }
+        if (!res.ok) throw new Error('Search is not available right now.');
+        const body = (await res.json()) as KbSearchResult;
+        if (request.signal.aborted) return;
+        for (const hit of body.hits) {
+          const row = template.content.cloneNode(true) as DocumentFragment;
+          row.querySelector<HTMLAnchorElement>('[data-href]')!.href = `/help/articles/${encodeURIComponent(hit.slug)}/`;
+          row.querySelector('[data-title]')!.textContent = hit.title;
+          row.querySelector('[data-category]')!.textContent = hit.category.name;
+          const snippet = row.querySelector<HTMLElement>('[data-snippet]')!;
+          snippet.textContent = hit.snippet;
+          snippet.hidden = !hit.snippet;
+          results.append(row);
+        }
+        const n = body.hits.length;
+        if (n) {
+          summary.textContent = `${n} ${n === 1 ? 'article' : 'articles'} for “${q}”`;
+          results.hidden = false;
+        } else {
+          none.hidden = false;
+        }
+      } catch (err) {
+        if (signal.aborted) return;
+        failedText.textContent = err instanceof Error && err.message ? err.message : 'Search is not available right now.';
+        failed.hidden = false;
+      } finally {
+        if (!request.signal.aborted) {
+          skeleton.hidden = true;
+          pending(false);
+        }
+      }
+    }
+
+    const on = {signal: stop.signal};
+    form.addEventListener(
+      'submit',
+      event => {
+        // Handled here (no page load): Base's busy-button helper skips a prevented submit.
+        event.preventDefault();
+        tried = true;
+        if (!check()) {
+          input.focus();
+          return;
+        }
+        const url = `${location.pathname}?q=${encodeURIComponent(input.value.trim())}`;
+        // Keep the router's state, so back / forward bring this page up again from the URL.
+        history.pushState(history.state, '', url);
+        void run();
+      },
+      on
+    );
+    input.addEventListener(
+      'input',
+      () => {
+        if (tried) check();
+      },
+      on
+    );
+    part('retry').addEventListener('click', () => void run(), on);
+    document.addEventListener(
+      'astro:before-swap',
+      () => {
+        current?.abort();
+        stop.abort();
+      },
+      {once: true}
+    );
+
+    void run();
+  });
+</script>

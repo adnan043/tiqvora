@@ -127,6 +127,31 @@ function describe(event: AuditRow): Line {
         icon: 'trash',
         tone: 'danger',
       };
+    // The knowledge base (src/server/routes/kb-manage.ts). The target is `<kind>:<id>`.
+    case 'kb_article_published':
+      return {who, what: `published an article (#${id ?? "?"})`, icon: 'file', tone: 'brand'};
+    case 'kb_article_unpublished':
+      return {who, what: `took an article off the help center (#${id ?? "?"})`, icon: 'file', tone: 'warning'};
+    case 'kb_article_archived':
+      return {who, what: `archived an article (#${id ?? "?"})`, icon: 'file'};
+    case 'kb_article_deleted':
+      return {who, what: `deleted an article (#${id ?? "?"})`, icon: 'trash', tone: 'danger'};
+    case 'kb_category_updated':
+      return {
+        who,
+        what: meta.slugChanged ? 'changed a help-center topic and its address' : 'edited a help-center topic',
+        icon: 'layers',
+      };
+    case 'kb_category_deleted':
+      return {who, what: 'deleted a help-center topic', icon: 'trash', tone: 'danger'};
+    case 'kb_snippet_deleted':
+      return {who, what: 'deleted a snippet', icon: 'trash', tone: 'danger'};
+    case 'kb_imported':
+      return {
+        who,
+        what: `imported ${Number(meta.articles ?? 0)} articles and ${Number(meta.snippets ?? 0)} snippets`,
+        icon: 'database',
+      };
     default:
       return {
         who,

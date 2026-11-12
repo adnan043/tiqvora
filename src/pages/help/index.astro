@@ -1,0 +1,133 @@
+---
+/**
+ * The help center's home, `/help/`: rendered on the server from ONE in-process read,
+ * `GET /site-api/kb/home` (the title and intro from the help-desk settings, the topics,
+ * the popular articles; cached in the Site Cache and cleared on every knowledge-base write).
+ *
+ * It reads NO visitor: the brand only (`staticContext`), and `<Base isStatic>` fills the
+ * header's visitor in the browser like a prerendered page. So the answer is the same for
+ * everyone and may be kept a few minutes (`public, max-age=300`); an outage answers a 503
+ * that is never cached.
+ *
+ * Search is a plain GET form to `/help/search/?q=` (it works without JavaScript too).
+ */
+import '../../styles/help.css';
+
+import Base from '../../layouts/Base.astro';
+import type {KbHome} from '../../lib/kb-types';
+import {Icon, ICON_NAMES, type IconName} from '../../portal/ui/icon';
+import {backend, read} from '../../server/backend';
+import {staticContext} from '../../server/page';
+
+export const prerender = false;
+
+const [{site, viewer}, home] = await Promise.all([
+  staticContext(Astro.request),
+  read<KbHome>(backend(Astro.request).kb.home.$get()),
+]);
+
+if (home) {
+  Astro.response.headers.set('Cache-Control', 'public, max-age=300');
+} else {
+  Astro.response.status = 503;
+  Astro.response.headers.set('Cache-Control', 'no-store');
+  Astro.response.headers.set('Retry-After', '60');
+}
+
+const iconOf = (name: string): IconName => ((ICON_NAMES as string[]).includes(name) ? (name as IconName) : 'file');
+const articles = (n: number) => `${n} ${n === 1 ? 'article' : 'articles'}`;
+const title = home?.title || 'How can we help?';
+const categories = (home?.categories ?? []).filter(category => category.articleCount > 0);
+const popular = home?.popular ?? [];
+---
+
+<Base site={site} viewer={viewer} isStatic title="Help center" description={home?.intro || undefined} noindex={!home}>
+  <main id="main" tabindex="-1" class="help">
+    <section class="wrap help-hero" aria-labelledby="help-title">
+      <p class="eyebrow">Help center</p>
+      <h1 id="help-title">{title}</h1>
+      {home?.intro && <p class="lede">{home.intro}</p>}
+      <form class="help-search" action="/help/search/" method="get" role="search" novalidate>
+        <label class="help-search-label" for="help-home-q">Search the help center</label>
+        <div class="help-search-box">
+          <Icon name="search" size={20} />
+          <input
+            id="help-home-q"
+            type="search"
+            name="q"
+            maxlength="120"
+            autocomplete="off"
+            enterkeyhint="search"
+            placeholder="e.g. change my delivery address"
+          />
+          <button class="button" type="submit">Search</button>
+        </div>
+      </form>
+    </section>
+
+    {
+      !home ? (
+        <div class="wrap help-section">
+          <div class="help-error" role="alert">
+            <p>The help center is not available right now. Try again in a minute.</p>
+            <a class="button button-secondary" href="/help/">
+              Try again
+            </a>
+          </div>
+        </div>
+      ) : categories.length === 0 && popular.length === 0 ? (
+        <div class="wrap help-section">
+          <div class="help-empty">
+            <strong>No articles yet</strong>
+            <p>Our team is writing the first guides. Check back soon.</p>
+          </div>
+        </div>
+      ) : (
+        <>
+          {categories.length > 0 && (
+            <section class="wrap help-section" aria-labelledby="help-topics">
+              <div class="help-section-head">
+                <h2 id="help-topics">Browse by topic</h2>
+              </div>
+              <ul class="help-categories">
+                {categories.map(category => (
+                  <li>
+                    <a class="help-category" href={`/help/${encodeURIComponent(category.slug)}/`}>
+                      <span class="help-tile">
+                        <Icon name={iconOf(category.icon)} size={20} />
+                      </span>
+                      <h3>{category.name}</h3>
+                      <p>{category.description}</p>
+                      <span class="help-category-count">{articles(category.articleCount)}</span>
+                    </a>
+                  </li>
+                ))}
+              </ul>
+            </section>
+          )}
+
+          {popular.length > 0 && (
+            <section class="wrap help-section" aria-labelledby="help-popular">
+              <div class="help-section-head">
+                <h2 id="help-popular">Popular articles</h2>
+              </div>
+              <ul class="help-list">
+                {popular.map(article => (
+                  <li>
+                    <a class="help-row" href={`/help/articles/${encodeURIComponent(article.slug)}/`}>
+                      <span class="help-row-text">
+                        <span class="help-row-title">{article.title}</span>
+                        <span class="help-row-meta">{article.category.name}</span>
+                      </span>
+                      <Icon name="chevron-right" size={18} />
+                    </a>
+                  </li>
+                ))}
+              </ul>
+            </section>
+          )}
+        </>
+      )
+    }
+  </main>
+</Base>

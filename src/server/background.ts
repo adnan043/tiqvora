@@ -1,4 +1,6 @@
 import {defineBackground} from '../platform/background';
+import {getDb} from '../platform/db';
+import {deleteOldRateWindows} from './rate-window';
 
 /**
  * This site's BACKGROUND JOBS: one handler per list (docs/agent/background-jobs.md).
@@ -13,4 +15,15 @@ import {defineBackground} from '../platform/background';
  */
 export const background = defineBackground({
   // 'booking-reminders': async ({bookingId}, job) => { ... },
+
+  /**
+   * Hourly (background.json): deletes rate-limit minutes older than an hour (src/server/rate-window.ts),
+   * in bounded batches. Idempotent: running it twice deletes nothing more. Anything left over
+   * (a huge backlog) goes on the next run.
+   */
+  'rate-windows-cleanup': async () => {
+    const db = getDb();
+    if (!db) throw new Error('The Site Database is off.');
+    await deleteOldRateWindows(db);
+  },
 });

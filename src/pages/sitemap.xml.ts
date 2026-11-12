@@ -5,18 +5,18 @@ import {absoluteUrl, xmlEscape as escape} from '../lib/seo';
 import {backend, read} from '../server/backend';
 
 /**
- * `/sitemap.xml`, rendered ON REQUEST (it lists the open jobs from the Site
+ * `/sitemap.xml`, rendered ON REQUEST (it lists the help center from the Site
  * Database) and cached for an hour: the public pages in `src/pages/` (found
- * automatically), every blog post and the newest open jobs (one bounded,
- * indexed query: `GET /site-api/jobs/sitemap`).
+ * automatically, `/help/` among them), every blog post, and the help center's
+ * topics and published articles (one bounded, cached read: `GET /site-api/kb/sitemap`).
  *
- * Never listed: sign-in pages, the dashboard, the API, the 404 and 500 pages. A new public
- * dynamic route (`[slug].astro`) is not found automatically: add its URLs
- * here, as posts and jobs are. A page with `<Base noindex>` goes in EXCLUDE.
+ * Never listed: sign-in pages, the dashboard, the API, the 404 and 500 pages, help search. A new
+ * public dynamic route (`[slug].astro`) is not found automatically: add its URLs
+ * here, as posts and help articles are. A page with `<Base noindex>` goes in EXCLUDE.
  */
 export const prerender = false;
 
-const EXCLUDE = new Set(['/404/', '/500/', '/checkout/', '/thanks/']);
+const EXCLUDE = new Set(['/404/', '/500/', '/checkout/', '/thanks/', '/help/search/']);
 const PRIVATE = /^\/(account|portal|site-api)(\/|$)/;
 
 /** `./about.astro` → `/about/`, `./blog/index.astro` → `/blog/` (every page URL ends with `/`, like the canonical). */
@@ -27,14 +27,17 @@ const pagePaths = Object.keys(import.meta.glob('./**/*.astro'))
   .sort();
 
 export const GET: APIRoute = async ({request}) => {
-  const [posts, jobs] = await Promise.all([
+  const [posts, help] = await Promise.all([
     publishedPosts(),
-    read<{jobs: {slug: string; updatedAt: string}[]}>(backend(request).jobs.sitemap.$get()),
+    read<{articles: {slug: string; updatedAt: string}[]; categories: {slug: string; updatedAt: string}[]}>(
+      backend(request).kb.sitemap.$get()
+    ),
   ]);
   const entries: {path: string; lastmod?: string}[] = [
     ...pagePaths.map(path => ({path})),
     ...posts.map(post => ({path: postHref(post), lastmod: (post.data.updatedAt ?? post.data.publishedAt).toISOString()})),
-    ...(jobs?.jobs ?? []).map(job => ({path: `/jobs/${encodeURIComponent(job.slug)}/`, lastmod: job.updatedAt})),
+    ...(help?.categories ?? []).map(category => ({path: `/help/${encodeURIComponent(category.slug)}/`, lastmod: category.updatedAt})),
+    ...(help?.articles ?? []).map(article => ({path: `/help/articles/${encodeURIComponent(article.slug)}/`, lastmod: article.updatedAt})),
   ];
   const urls = entries.flatMap(({path, lastmod}) => {
     const loc = absoluteUrl(path);
@@ -45,8 +48,8 @@ export const GET: APIRoute = async ({request}) => {
     headers: {
       'Content-Type': 'application/xml; charset=utf-8',
       // The same for everyone (no cookies read): browsers and caches may keep it an hour,
-      // but only a complete one: without the jobs (a database outage) a few minutes.
-      'Cache-Control': jobs ? 'public, max-age=3600' : 'public, max-age=300',
+      // but only a complete one: without the help center (a database outage) a few minutes.
+      'Cache-Control': help ? 'public, max-age=3600' : 'public, max-age=300',
     },
   });
 };

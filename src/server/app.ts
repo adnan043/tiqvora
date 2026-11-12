@@ -9,7 +9,8 @@ import {syncPermissions} from '../platform/permission-sync';
 import {authSettings} from './auth-settings';
 import {checkoutRoutes, membershipRoutes} from './routes/checkout';
 import {abilitiesFor, CATALOGUE} from './permissions';
-import {jobRoutes} from './routes/jobs';
+import {kbRoutes} from './routes/kb';
+import {kbManageRoutes} from './routes/kb-manage';
 import {siteRoutes} from './routes/site';
 
 /**
@@ -25,7 +26,8 @@ import {siteRoutes} from './routes/site';
  *   *    /auth/...      sign-up, sign-in, sessions, passwords   platform/auth/routes.ts
  *   *    /admin/...     users, roles, audit log (admins)        platform/auth/admin.ts
  *   GET  /site          the site's brand                        routes/site.ts
- *   *    /jobs/...      the job board (Site Database)           routes/jobs.ts
+ *   *    /kb/manage/... the knowledge base, for its editors     routes/kb-manage.ts
+ *   *    /kb/...        the public help center's data           routes/kb.ts
  *   *    /checkout/...  start and confirm a payment             routes/checkout.ts
  *   *    /memberships/... the member's memberships               routes/checkout.ts
  *
@@ -72,7 +74,9 @@ export const app = new Hono()
   .route('/auth', authRoutes(authSettings))
   .route('/admin', adminRoutes)
   .route('/site', siteRoutes)
-  .route('/jobs', jobRoutes)
+  // `/kb/manage` BEFORE `/kb`, so no manage path is read as a public one.
+  .route('/kb/manage', kbManageRoutes)
+  .route('/kb', kbRoutes)
   .route('/memberships', membershipRoutes)
 
   .notFound(c => c.json(problem('not_found', 'No such Site API route.'), 404))

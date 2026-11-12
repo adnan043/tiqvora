@@ -22,9 +22,24 @@ describe('the permission catalogue', () => {
     expect(CORE.ROLE_READ).toBe('site:role:read');
     expect(CORE.ROLE_UPDATE).toBe('site:role:update');
     expect(CORE.AUDIT_READ).toBe('site:audit:read');
-    expect(PERMISSIONS.JOB_MANAGE).toBe('site:job:manage');
+    expect(PERMISSIONS.HELPDESK_INBOX).toBe('site:helpdesk:inbox');
+    expect(PERMISSIONS.KB_EDIT).toBe('site:kb:edit');
+    expect(PERMISSIONS.HELPDESK_SETTINGS).toBe('site:helpdesk:settings');
+    expect(PERMISSIONS.HELPDESK_REPORTS).toBe('site:helpdesk:reports');
+    // Retired with the job board: nothing may check it again.
+    expect('JOB_MANAGE' in PERMISSIONS).toBe(false);
     expect(Object.keys(NO_ABILITIES).sort()).toEqual(
-      ['editRoles', 'manageJobs', 'manageRoles', 'manageUsers', 'readAudit', 'updateUsers'].sort()
+      [
+        'editKnowledge',
+        'editRoles',
+        'manageHelpdesk',
+        'manageRoles',
+        'manageUsers',
+        'readAudit',
+        'seeHelpdeskReports',
+        'updateUsers',
+        'useInbox',
+      ].sort()
     );
     expect(Object.values(NO_ABILITIES).every(v => v === false)).toBe(true);
   });
@@ -32,15 +47,23 @@ describe('the permission catalogue', () => {
   it('derives the abilities from granted codenames, wildcards included', () => {
     const owner = abilitiesFor(new Set(['*']));
     expect(Object.values(owner).every(Boolean)).toBe(true);
-    const admin = abilitiesFor(new Set(['site:user:*', 'site:role:read', 'site:audit:read', 'site:job:manage']));
+    const admin = abilitiesFor(
+      new Set(['site:user:*', 'site:role:read', 'site:audit:read', 'site:helpdesk:*', 'site:kb:edit'])
+    );
     expect(admin).toEqual({
       manageUsers: true,
       updateUsers: true,
       manageRoles: true,
       editRoles: false,
       readAudit: true,
-      manageJobs: true,
+      useInbox: true,
+      editKnowledge: true,
+      manageHelpdesk: true,
+      seeHelpdeskReports: true,
     } satisfies Abilities);
+    // A support agent: the inbox and the knowledge base, nothing else.
+    const agent = abilitiesFor(new Set(['site:helpdesk:inbox', 'site:kb:edit']));
+    expect(Object.entries(agent).filter(([, v]) => v).map(([k]) => k).sort()).toEqual(['editKnowledge', 'useInbox']);
     // The type is exact: a key nobody declared does not exist.
     // @ts-expect-error not in the catalogue
     void NO_ABILITIES.manageEverything;

@@ -18,14 +18,14 @@ describe('a list page', () => {
 
   it('never builds a row from HTML', () => {
     const helper = readFileSync(new URL('../src/lib/list-page.ts', import.meta.url), 'utf8');
-    const page = readFileSync(new URL('../src/pages/jobs/index.astro', import.meta.url), 'utf8');
+    const page = readFileSync(new URL('../src/pages/help/search/index.astro', import.meta.url), 'utf8');
     for (const source of [helper, page]) expect(source).not.toMatch(/innerHTML|set:html|insertAdjacentHTML/);
   });
 
-  it('the job board shell is static and carries what search engines read', () => {
-    const page = readFileSync(new URL('../src/pages/jobs/index.astro', import.meta.url), 'utf8');
+  it('the help-center search shell is static and carries what search engines read', () => {
+    const page = readFileSync(new URL('../src/pages/help/search/index.astro', import.meta.url), 'utf8');
     expect(page).toContain('export const prerender = true');
-    expect(page).toContain('<h1>Open roles</h1>');
+    expect(page).toContain('<h1>Search the help center</h1>');
     expect(page).toContain('description=');
   });
 });

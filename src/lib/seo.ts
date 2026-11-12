@@ -44,7 +44,7 @@ const organizationId = () => {
   return origin ? `${origin}/#organization` : null;
 };
 
-/** The site as an `Organization` (name, address, logo): the publisher of posts and the hiring org of jobs. */
+/** The site as an `Organization` (name, address, logo): the publisher of posts and help articles. */
 function organization(site: {name: string; logo?: string | null}): JsonLd {
   const id = organizationId();
   const url = absoluteUrl('/');
@@ -96,35 +96,35 @@ export function postJsonLd(
   };
 }
 
-const EMPLOYMENT_TYPE: Record<string, string> = {
-  'full-time': 'FULL_TIME',
-  'part-time': 'PART_TIME',
-  contract: 'CONTRACTOR',
-  internship: 'INTERN',
-};
-
-/** An open job's `JobPosting` (Google for Jobs). The description is plain text, as on the page. */
-export function jobJsonLd(job: {
-  slug: string;
-  title: string;
-  company: string;
-  location: string;
-  type: string;
-  remote: boolean;
-  description: string;
-  createdAt: string;
-}): JsonLd {
-  const url = absoluteUrl(`/jobs/${encodeURIComponent(job.slug)}/`);
+/**
+ * A help-center article's `Article` + its `BreadcrumbList` (Help › Category › Title), as one
+ * `@graph`. Only what the page shows: its title, excerpt, dates and the breadcrumb above it.
+ */
+export function helpArticleJsonLd(
+  site: {name: string; logo?: string | null},
+  article: {path: string; title: string; description: string; publishedAt: string | null; updatedAt: string},
+  breadcrumbs: {name: string; path: string}[]
+): JsonLd {
+  const url = absoluteUrl(article.path);
+  const publisher = organization(site);
+  const items = breadcrumbs.map((crumb, i) => {
+    const item = absoluteUrl(crumb.path);
+    return {'@type': 'ListItem', position: i + 1, name: crumb.name, ...(item && {item})};
+  });
   return {
     '@context': 'https://schema.org',
-    '@type': 'JobPosting',
-    title: job.title,
-    description: job.description,
-    datePosted: job.createdAt,
-    hiringOrganization: {'@type': 'Organization', name: job.company},
-    jobLocation: {'@type': 'Place', address: {'@type': 'PostalAddress', addressLocality: job.location}},
-    ...(job.remote && {jobLocationType: 'TELECOMMUTE'}),
-    ...(EMPLOYMENT_TYPE[job.type] && {employmentType: EMPLOYMENT_TYPE[job.type]}),
-    ...(url && {url}),
+    '@graph': [
+      {
+        '@type': 'Article',
+        headline: article.title,
+        ...(article.description && {description: article.description}),
+        ...(article.publishedAt && {datePublished: article.publishedAt}),
+        dateModified: article.updatedAt,
+        author: publisher,
+        publisher,
+        ...(url && {url, mainEntityOfPage: url}),
+      },
+      {'@type': 'BreadcrumbList', itemListElement: items},
+    ],
   };
 }

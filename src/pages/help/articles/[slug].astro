@@ -1,0 +1,300 @@
+---
+/**
+ * One help-center article, `/help/articles/<slug>/`, rendered on the server.
+ *
+ * One read (in-process, Site Cache behind it, cleared on every knowledge-base write), beside
+ * the brand: `GET /site-api/kb/articles/:slug` — the article (published only), its sanitized
+ * HTML, its `##` headings, up to 4 related articles and its topic's articles for the left nav.
+ *
+ * The body is `article.html`: rendered from Markdown AND passed through `sanitizeHtml` by the
+ * route (src/server/routes/kb.ts), the only HTML this page renders with `set:html`.
+ *
+ * It reads NO visitor (brand only; `<Base isStatic>` fills the header in the browser), so a found
+ * article may be kept a few minutes. Unknown or unpublished: a real 404; an outage: a 503.
+ *
+ * In the browser: one view counted per page view (`POST …/view`), and "Was this helpful?"
+ * (`POST …/feedback`), both through `siteFetch` (it adds the CSRF token).
+ */
+import '../../../styles/help.css';
+
+import NotFound from '../../../components/NotFound.astro';
+import Base from '../../../layouts/Base.astro';
+import {formatDate} from '../../../lib/format';
+import {type KbArticle, KB_LIMITS, SLUG_RE} from '../../../lib/kb-types';
+import {helpArticleJsonLd} from '../../../lib/seo';
+import {Icon} from '../../../portal/ui/icon';
+import {backend, read} from '../../../server/backend';
+import {staticContext} from '../../../server/page';
+
+export const prerender = false;
+
+const slug = Astro.params.slug ?? '';
+const valid = SLUG_RE.test(slug) && slug.length <= KB_LIMITS.articleSlug;
+const api = backend(Astro.request);
+const [{site, viewer}, answer] = await Promise.all([
+  staticContext(Astro.request),
+  valid
+    ? api.kb.articles[':slug'].$get({param: {slug}}).catch(() => null)
+    : Promise.resolve(null),
+]);
+const found = answer?.ok ? await read<KbArticle>(Promise.resolve(answer)) : null;
+const article = found ?? null;
+const missing = !article && (!valid || answer?.status === 404);
+if (article) {
+  Astro.response.headers.set('Cache-Control', 'public, max-age=300');
+} else {
+  Astro.response.status = missing ? 404 : 503;
+  Astro.response.headers.set('Cache-Control', 'no-store');
+  if (!missing) Astro.response.headers.set('Retry-After', '60');
+}
+
+const name = site?.name ?? 'My site';
+const path = `/help/articles/${encodeURIComponent(slug)}/`;
+const categoryPath = article ? `/help/${encodeURIComponent(article.category.slug)}/` : '/help/';
+const jsonLd = article
+  ? helpArticleJsonLd(
+      {name, logo: site?.logo},
+      {path, title: article.title, description: article.excerpt, publishedAt: article.publishedAt, updatedAt: article.updatedAt},
+      [
+        {name: 'Help center', path: '/help/'},
+        {name: article.category.name, path: categoryPath},
+        {name: article.title, path},
+      ]
+    )
+  : undefined;
+// The side nav comes with the article (one cached read); older cached values have none.
+const siblings = article?.siblings ?? [];
+---
+
+{
+  article ? (
+    <Base
+      site={site}
+      viewer={viewer}
+      isStatic
+      title={article.title}
+      description={article.excerpt || `${article.title}: help from the ${name} team.`}
+      type="article"
+      publishedAt={article.publishedAt ? new Date(article.publishedAt) : undefined}
+      updatedAt={new Date(article.updatedAt)}
+      jsonLd={jsonLd}>
+      <main id="main" tabindex="-1" class="help wrap">
+        <div class="help-article-layout">
+          {siblings.length > 0 && (
+            <nav class="help-sidenav" aria-label={`Articles in ${article.category.name}`}>
+              <p class="help-sidenav-title">
+                <a href={categoryPath}>{article.category.name}</a>
+              </p>
+              <ul>
+                {siblings.map(item => (
+                  <li>
+                    <a
+                      href={`/help/articles/${encodeURIComponent(item.slug)}/`}
+                      aria-current={item.slug === article.slug ? 'page' : undefined}>
+                      {item.title}
+                    </a>
+                  </li>
+                ))}
+              </ul>
+            </nav>
+          )}
+
+          <article class="help-article" data-help-article={String(article.id)}>
+            <header>
+              <nav class="help-breadcrumb" aria-label="Breadcrumb">
+                <ol>
+                  <li>
+                    <a href="/help/">Help center</a>
+                  </li>
+                  <li>
+                    <a href={categoryPath}>{article.category.name}</a>
+                  </li>
+                  <li aria-current="page">{article.title}</li>
+                </ol>
+              </nav>
+              <h1>{article.title}</h1>
+              {article.excerpt && <p class="help-article-excerpt">{article.excerpt}</p>}
+              <p class="help-article-meta">Updated {formatDate(article.updatedAt)}</p>
+            </header>
+
+            {article.headings.length > 1 && (
+              <nav class="help-toc" aria-labelledby="help-toc-title">
+                <h2 id="help-toc-title">On this page</h2>
+                <ol>
+                  {article.headings.map(heading => (
+                    <li>
+                      <a href={`#${heading.id}`}>{heading.text}</a>
+                    </li>
+                  ))}
+                </ol>
+              </nav>
+            )}
+
+            {/* Sanitized on the server (renderMarkdown + sanitizeHtml in the route): the one set:html here. */}
+            <div class="prose" set:html={article.html} />
+
+            <section class="help-feedback" aria-labelledby="help-feedback-title" data-help-feedback>
+              <h2 id="help-feedback-title">Was this helpful?</h2>
+              <div class="help-feedback-actions" data-feedback-actions>
+                <button class="button button-secondary" type="button" data-feedback="yes">
+                  Yes
+                </button>
+                <button class="button button-secondary" type="button" data-feedback="no">
+                  No
+                </button>
+              </div>
+              <p class="help-feedback-status" role="status" aria-live="polite" tabindex="-1" data-feedback-status />
+            </section>
+
+            {article.related.length > 0 && (
+              <section class="help-related" aria-labelledby="help-related-title">
+                <h2 id="help-related-title">Related articles</h2>
+                <ul class="help-list">
+                  {article.related.map(item => (
+                    <li>
+                      <a class="help-row" href={`/help/articles/${encodeURIComponent(item.slug)}/`}>
+                        <span class="help-row-text">
+                          <span class="help-row-title">{item.title}</span>
+                          {item.excerpt && <span class="help-row-snippet">{item.excerpt}</span>}
+                        </span>
+                        <Icon name="chevron-right" size={18} />
+                      </a>
+                    </li>
+                  ))}
+                </ul>
+              </section>
+            )}
+
+            <section class="help-more" aria-labelledby="help-more-title">
+              <h2 id="help-more-title">Still looking for an answer?</h2>
+              <form class="help-search" action="/help/search/" method="get" role="search" novalidate>
+                <label class="help-search-label" for="help-article-q">
+                  Search the help center
+                </label>
+                <div class="help-search-box">
+                  <Icon name="search" size={20} />
+                  <input id="help-article-q" type="search" name="q" maxlength="120" autocomplete="off" enterkeyhint="search" placeholder="e.g. track my order" />
+                  <button class="button" type="submit">
+                    Search
+                  </button>
+                </div>
+              </form>
+            </section>
+          </article>
+        </div>
+      </main>
+    </Base>
+  ) : missing ? (
+    <Base site={site} viewer={viewer} isStatic title="Page not found" noindex>
+      <NotFound site={site} />
+    </Base>
+  ) : (
+    <Base site={site} viewer={viewer} isStatic title="Not available right now" noindex>
+      <main id="main" tabindex="-1" class="wrap narrow section center">
+        <p class="eyebrow">Help center</p>
+        <h1>This article is not available right now</h1>
+        <p class="lede">Something went wrong on our side. Try again in a minute.</p>
+        <p>
+          <a class="button" href="/help/">
+            Help center
+          </a>
+        </p>
+      </main>
+    </Base>
+  )
+}
+
+<script>
+  import {siteFetch} from '../../../platform/browser';
+
+  const THANKS = {
+    yes: 'Thanks for letting us know.',
+    no: 'Thanks. We’ll use this to make the article better.',
+  } as const;
+
+  const remembered = (id: string): 'yes' | 'no' | null => {
+    try {
+      const value = sessionStorage.getItem(`help:feedback:${id}`);
+      return value === 'yes' || value === 'no' ? value : null;
+    } catch {
+      return null;
+    }
+  };
+  const remember = (id: string, value: 'yes' | 'no') => {
+    try {
+      sessionStorage.setItem(`help:feedback:${id}`, value);
+    } catch {
+      // Storage blocked: the thanks still shows, only not after a reload.
+    }
+  };
+
+  document.addEventListener('astro:page-load', () => {
+    const root = document.querySelector<HTMLElement>('[data-help-article]');
+    if (!root || root.dataset.bound) return;
+    root.dataset.bound = '1';
+    const id = root.dataset.helpArticle ?? '';
+    if (!/^\d+$/.test(id)) return;
+
+    // One view per page view; the server counts at most so many a minute. Nothing to show.
+    void siteFetch(`/site-api/kb/articles/${id}/view`, {method: 'POST', keepalive: true}).catch(() => null);
+
+    const box = root.querySelector<HTMLElement>('[data-help-feedback]');
+    const actions = box?.querySelector<HTMLElement>('[data-feedback-actions]');
+    const status = box?.querySelector<HTMLElement>('[data-feedback-status]');
+    if (!box || !actions || !status) return;
+    const buttons = Array.from(actions.querySelectorAll<HTMLButtonElement>('button[data-feedback]'));
+
+    const thank = (value: 'yes' | 'no') => {
+      // Hiding the buttons would drop keyboard focus on <body>: keep the reader's place.
+      const hadFocus = actions.contains(document.activeElement);
+      actions.hidden = true;
+      status.dataset.tone = 'ok';
+      status.textContent = THANKS[value];
+      if (hadFocus) status.focus();
+    };
+    const already = remembered(id);
+    if (already) {
+      thank(already);
+      return;
+    }
+
+    for (const button of buttons) {
+      button.addEventListener('click', async () => {
+        const value = button.dataset.feedback === 'yes' ? 'yes' : 'no';
+        const label = button.textContent ?? '';
+        // Pending: the clicked one spins, both are disabled, so a second click never sends twice.
+        for (const other of buttons) other.disabled = true;
+        button.setAttribute('aria-busy', 'true');
+        const spinner = document.createElement('span');
+        spinner.className = 'spinner';
+        spinner.setAttribute('aria-hidden', 'true');
+        button.replaceChildren(spinner, document.createTextNode('Sending…'));
+        status.textContent = '';
+        delete status.dataset.tone;
+        let message = 'We couldn’t send that. Try again.';
+        try {
+          const res = await siteFetch(`/site-api/kb/articles/${id}/feedback`, {
+            method: 'POST',
+            headers: {'content-type': 'application/json', accept: 'application/json'},
+            body: JSON.stringify({helpful: value === 'yes'}),
+          });
+          if (res.ok) {
+            remember(id, value);
+            thank(value);
+            return;
+          }
+          if (res.status === 429) message = 'Too many answers right now. Try again in a minute.';
+          else if (res.status === 404) message = 'This article was just changed. Reload the page and try again.';
+        } catch {
+          // Offline or the request failed: the message above.
+        } finally {
+          button.removeAttribute('aria-busy');
+          button.textContent = label;
+          for (const other of buttons) other.disabled = false;
+        }
+        status.dataset.tone = 'error';
+        status.textContent = message;
+      });
+    }
+  });
+</script>

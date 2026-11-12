@@ -1,0 +1,787 @@
+/*
+ * The public help center (src/pages/help/**): its home, a topic, an article and search.
+ * Imported by those pages only. Tokens from global.css only (docs/design-system.md), so
+ * dark mode follows on its own; buttons, the prose and the fields are global.css's.
+ */
+
+/* ---------------------------------------------------------------- shared -- */
+
+/* `main.help` / `.help .help-section`: stronger than `.wrap`'s own padding and margin on the same element. */
+main.help {
+  padding-top: clamp(var(--space-10), 6vw, var(--space-12));
+  padding-bottom: var(--space-16);
+}
+
+.help .help-section {
+  margin-top: var(--space-16);
+}
+
+@media (max-width: 640px) {
+  .help .help-section {
+    margin-top: var(--space-10);
+  }
+}
+
+.help-section-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--space-4);
+  margin-bottom: var(--space-5);
+}
+
+.help-section-head h2 {
+  margin: 0;
+  font-size: var(--text-3xl);
+  line-height: var(--leading-3xl);
+  font-weight: var(--weight-semibold);
+}
+
+.help-section-head a {
+  color: var(--accent-text);
+  font-weight: var(--weight-medium);
+  text-decoration: none;
+}
+
+.help-section-head a:hover {
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+
+/* --------------------------------------------------------------- search -- */
+
+.help-search {
+  display: grid;
+  /* minmax(0, 1fr): the input's own width never pushes the box off a phone screen. */
+  grid-template-columns: minmax(0, 1fr);
+  gap: var(--space-2);
+  width: 100%;
+  max-width: var(--container-narrow);
+  margin: 0 auto;
+  text-align: left;
+}
+
+.help-search-label {
+  font-size: var(--text-sm);
+  line-height: var(--leading-sm);
+  font-weight: var(--weight-medium);
+  color: var(--muted);
+}
+
+.help-search-box {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-height: var(--control-lg);
+  padding: var(--space-1) var(--space-1) var(--space-1) var(--space-4);
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius-lg);
+  background: var(--card);
+  box-shadow: var(--shadow-sm);
+  transition:
+    border-color 0.15s ease,
+    box-shadow 0.15s ease;
+}
+
+.help-search-box:hover {
+  border-color: var(--muted);
+}
+
+.help-search-box:focus-within {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-soft);
+}
+
+.help-search-box[data-invalid] {
+  border-color: var(--danger);
+}
+
+.help-search-box[data-invalid]:focus-within {
+  box-shadow: 0 0 0 3px var(--danger-soft);
+}
+
+.help-search-box > .icon {
+  flex: none;
+  color: var(--subtle);
+}
+
+/* Phones: the same box as the home page's (no icon, body-size text). */
+@media (max-width: 640px) {
+  .help-search-box {
+    padding-left: var(--space-3);
+  }
+
+  .help-search-box > .icon {
+    display: none;
+  }
+
+  .help-search-box input {
+    font-size: var(--text-md);
+    line-height: var(--leading-md);
+  }
+}
+
+.help-search-box input {
+  flex: 1;
+  min-width: 0;
+  height: var(--control);
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--ink);
+  font: inherit;
+  font-size: var(--text-lg);
+  line-height: var(--leading-lg);
+}
+
+.help-search-box input:focus {
+  outline: none;
+}
+
+.help-search-box input::placeholder {
+  color: var(--subtle);
+}
+
+/* The browser's own clear button: the box is the control, keep it plain. */
+.help-search-box input::-webkit-search-cancel-button {
+  cursor: pointer;
+}
+
+.help-search-box .button {
+  flex: none;
+}
+
+.help-search-error {
+  margin: 0;
+  color: var(--danger);
+  font-size: var(--text-sm);
+  line-height: var(--leading-sm);
+}
+
+/* ----------------------------------------------------------------- home -- */
+
+.help-hero {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  justify-items: center;
+  gap: var(--space-3);
+  text-align: center;
+}
+
+.help-hero h1 {
+  margin: 0;
+}
+
+.help-hero .lede {
+  margin: 0 auto var(--space-3);
+}
+
+/* Topics: 3 columns, 2 on tablets, 1 on phones. */
+.help-categories {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: var(--space-6);
+}
+
+@media (max-width: 1024px) {
+  .help-categories {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 640px) {
+  .help-categories {
+    grid-template-columns: minmax(0, 1fr);
+    gap: var(--space-4);
+  }
+}
+
+.help-category {
+  display: grid;
+  grid-template-rows: auto auto 1fr auto;
+  gap: var(--space-2);
+  height: 100%;
+  padding: var(--space-5);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--card);
+  color: inherit;
+  text-decoration: none;
+  transition:
+    border-color 0.15s ease,
+    box-shadow 0.15s ease;
+}
+
+.help-category:hover {
+  border-color: var(--line-strong);
+  box-shadow: var(--shadow-md);
+}
+
+.help-category:hover h3 {
+  color: var(--accent-text);
+}
+
+.help-category:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.help-category h3 {
+  margin: var(--space-2) 0 0;
+  font-size: var(--text-lg);
+  line-height: var(--leading-lg);
+  font-weight: var(--weight-semibold);
+  letter-spacing: 0;
+}
+
+.help-category p {
+  margin: 0;
+  color: var(--muted);
+}
+
+.help-category-count {
+  font-size: var(--text-sm);
+  line-height: var(--leading-sm);
+  font-weight: var(--weight-medium);
+  color: var(--subtle);
+}
+
+@media (max-width: 640px) {
+  .help-category {
+    padding: var(--space-4);
+  }
+}
+
+/* A topic's icon, on a soft brand tile. */
+.help-tile {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 40px;
+  height: 40px;
+  flex: none;
+  border-radius: var(--radius-sm);
+  background: var(--accent-soft);
+  color: var(--accent-text);
+}
+
+.help-tile-lg {
+  width: 48px;
+  height: 48px;
+  border-radius: var(--radius);
+}
+
+/* -------------------------------------------------- article rows (lists) -- */
+
+.help-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--card);
+  overflow: hidden;
+}
+
+.help-list > li + li {
+  border-top: 1px solid var(--line);
+}
+
+.help-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-4);
+  min-height: var(--control-lg);
+  padding: var(--space-4) var(--space-5);
+  color: inherit;
+  text-decoration: none;
+  transition: background-color 0.15s ease;
+}
+
+.help-row:hover {
+  background: var(--hover);
+}
+
+.help-row:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+}
+
+.help-row-text {
+  display: grid;
+  gap: var(--space-0-5);
+  flex: 1;
+  min-width: 0;
+}
+
+.help-row-title {
+  font-weight: var(--weight-semibold);
+  overflow-wrap: anywhere;
+}
+
+.help-row:hover .help-row-title {
+  color: var(--accent-text);
+}
+
+.help-row-meta,
+.help-row-snippet {
+  color: var(--muted);
+  font-size: var(--text-sm);
+  line-height: var(--leading-sm);
+}
+
+.help-row-snippet {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  line-clamp: 2;
+  overflow: hidden;
+}
+
+.help-row > .icon {
+  color: var(--subtle);
+}
+
+@media (max-width: 640px) {
+  .help-row {
+    padding: var(--space-3) var(--space-4);
+  }
+}
+
+/* --------------------------------------------------------------- states -- */
+
+.help-empty {
+  display: grid;
+  justify-items: center;
+  gap: var(--space-2);
+  padding: var(--space-10) var(--space-5);
+  border: 1px dashed var(--line-strong);
+  border-radius: var(--radius);
+  text-align: center;
+  color: var(--muted);
+}
+
+.help-empty p {
+  margin: 0;
+}
+
+.help-empty strong {
+  color: var(--ink);
+  font-size: var(--text-lg);
+  line-height: var(--leading-lg);
+}
+
+.help-error {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+  padding: var(--space-4) var(--space-5);
+  border: 1px solid var(--danger);
+  border-radius: var(--radius);
+  background: var(--danger-soft);
+  color: var(--ink);
+}
+
+.help-error p {
+  margin: 0;
+}
+
+/* Search results while they load: the same rows, greyed. */
+.help-skeleton {
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  padding: 0 var(--space-5);
+}
+
+.help-skeleton .list-skeleton-row:last-child {
+  border-bottom: 0;
+}
+
+/* ----------------------------------------------------------- breadcrumb -- */
+
+.help-breadcrumb ol {
+  list-style: none;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-1) var(--space-2);
+  margin: 0 0 var(--space-4);
+  padding: 0;
+  font-size: var(--text-sm);
+  line-height: var(--leading-sm);
+  color: var(--muted);
+}
+
+.help-breadcrumb li {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-width: 0;
+}
+
+.help-breadcrumb li + li::before {
+  content: '›';
+  color: var(--subtle);
+}
+
+.help-breadcrumb a {
+  color: var(--muted);
+  text-decoration: none;
+  font-weight: var(--weight-medium);
+}
+
+.help-breadcrumb a:hover {
+  color: var(--accent-text);
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+
+.help-breadcrumb [aria-current='page'] {
+  color: var(--ink);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 40ch;
+}
+
+/* On a phone the title is right below: the trail stops at the topic. */
+@media (max-width: 640px) {
+  .help-breadcrumb [aria-current='page'] {
+    display: none;
+  }
+}
+
+/* ---------------------------------------------------------------- topic -- */
+
+.help-topic-head {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-4);
+  margin-bottom: var(--space-8);
+}
+
+.help-topic-head h1 {
+  margin: 0 0 var(--space-1);
+}
+
+.help-topic-head p {
+  margin: 0;
+}
+
+.help-topic-head .help-category-count {
+  display: block;
+  margin-top: var(--space-2);
+}
+
+@media (max-width: 640px) {
+  .help-topic-head {
+    flex-direction: column;
+    gap: var(--space-3);
+  }
+}
+
+/* "Didn't find it?": a search at the end of a topic or an article. */
+.help-more {
+  display: grid;
+  gap: var(--space-4);
+  margin-top: var(--space-12);
+  padding: var(--space-6);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--surface);
+}
+
+.help-more h2 {
+  margin: 0;
+  font-size: var(--text-xl);
+  line-height: var(--leading-xl);
+}
+
+.help-more .help-search {
+  max-width: none;
+  margin: 0;
+}
+
+@media (max-width: 640px) {
+  .help-more {
+    padding: var(--space-4);
+  }
+}
+
+/* -------------------------------------------------------------- article -- */
+
+/* The topic's articles on the left (desktop only), the reading column beside it. */
+.help-article-layout {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: var(--space-10);
+  /* No side nav below 1025px: the reading column stays narrow (~70 characters a line). */
+  max-width: var(--container-narrow);
+  margin-inline: auto;
+}
+
+@media (min-width: 1025px) {
+  .help-article-layout {
+    grid-template-columns: minmax(0, 15rem) minmax(0, var(--container-narrow));
+    max-width: none;
+    justify-content: start;
+    gap: var(--space-12);
+  }
+}
+
+.help-sidenav {
+  display: none;
+}
+
+@media (min-width: 1025px) {
+  .help-sidenav {
+    display: block;
+    position: sticky;
+    top: calc(var(--control-lg) + var(--space-8));
+    align-self: start;
+    max-height: calc(100vh - var(--control-lg) - var(--space-12));
+    overflow-y: auto;
+  }
+}
+
+.help-sidenav-title {
+  margin: 0 0 var(--space-2);
+  padding: 0 var(--space-3);
+  font-size: var(--text-sm);
+  line-height: var(--leading-sm);
+  font-weight: var(--weight-semibold);
+  color: var(--ink);
+}
+
+.help-sidenav-title a {
+  color: inherit;
+  text-decoration: none;
+}
+
+.help-sidenav-title a:hover {
+  color: var(--accent-text);
+}
+
+.help-sidenav ul {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: var(--space-0-5);
+}
+
+.help-sidenav li a {
+  display: flex;
+  align-items: center;
+  min-height: var(--control-sm);
+  padding: var(--space-1) var(--space-3);
+  border-radius: var(--radius-sm);
+  color: var(--muted);
+  font-size: var(--text-sm);
+  line-height: var(--leading-sm);
+  font-weight: var(--weight-medium);
+  text-decoration: none;
+}
+
+.help-sidenav li a:hover {
+  background: var(--hover);
+  color: var(--ink);
+}
+
+.help-sidenav li a[aria-current='page'] {
+  background: var(--accent-soft);
+  color: var(--accent-text);
+}
+
+.help-sidenav li a:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.help-article {
+  min-width: 0;
+}
+
+.help-article header {
+  margin-bottom: var(--space-6);
+}
+
+.help-article h1 {
+  margin: 0 0 var(--space-3);
+  overflow-wrap: anywhere;
+}
+
+.help-article-excerpt {
+  margin: 0 0 var(--space-3);
+  color: var(--muted);
+  font-size: var(--text-xl);
+  line-height: var(--leading-xl);
+}
+
+.help-article-meta {
+  margin: 0;
+  color: var(--subtle);
+  font-size: var(--text-sm);
+  line-height: var(--leading-sm);
+}
+
+/* "On this page": the article's `##` sections. */
+.help-toc {
+  margin: 0 0 var(--space-8);
+  padding: var(--space-4) var(--space-5);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--surface);
+}
+
+.help-toc h2 {
+  margin: 0 0 var(--space-2);
+  font-size: var(--text-sm);
+  line-height: var(--leading-sm);
+  font-weight: var(--weight-semibold);
+  letter-spacing: 0;
+}
+
+.help-toc ol {
+  margin: 0;
+  padding-left: var(--space-5);
+  display: grid;
+  gap: var(--space-1);
+}
+
+.help-toc a {
+  color: var(--accent-text);
+  text-decoration: none;
+}
+
+.help-toc a:hover {
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+
+/* The body (`.prose` in global.css), with room above each section and a jump that clears the header. */
+.help-article .prose {
+  overflow-wrap: anywhere;
+}
+
+.help-article .prose h2 {
+  margin-top: var(--space-10);
+  font-size: var(--text-2xl);
+  line-height: var(--leading-2xl);
+  scroll-margin-top: calc(var(--control-lg) + var(--space-6));
+}
+
+.help-article .prose h3 {
+  margin-top: var(--space-8);
+  scroll-margin-top: calc(var(--control-lg) + var(--space-6));
+}
+
+.help-article .prose a {
+  color: var(--accent-text);
+  text-underline-offset: 3px;
+}
+
+.help-article .prose li + li {
+  margin-top: var(--space-1);
+}
+
+.help-article .prose th,
+.help-article .prose td {
+  padding: var(--space-2) var(--space-3);
+  border: 1px solid var(--line);
+  text-align: left;
+}
+
+/* "Was this helpful?" */
+.help-feedback {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3) var(--space-6);
+  margin-top: var(--space-12);
+  padding: var(--space-5);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--surface);
+}
+
+.help-feedback h2 {
+  margin: 0;
+  font-size: var(--text-lg);
+  line-height: var(--leading-lg);
+  letter-spacing: 0;
+}
+
+.help-feedback-actions {
+  display: flex;
+  gap: var(--space-3);
+}
+
+.help-feedback-actions .button {
+  min-width: 5.5rem;
+}
+
+.help-feedback-status {
+  flex-basis: 100%;
+  margin: 0;
+  color: var(--muted);
+}
+
+.help-feedback-status:empty {
+  display: none;
+}
+
+.help-feedback-status[data-tone='ok'] {
+  color: var(--success);
+}
+
+.help-feedback-status[data-tone='error'] {
+  color: var(--danger);
+}
+
+@media (max-width: 640px) {
+  .help-feedback {
+    padding: var(--space-4);
+  }
+}
+
+.help-related {
+  margin-top: var(--space-12);
+}
+
+.help-related h2 {
+  margin: 0 0 var(--space-4);
+  font-size: var(--text-xl);
+  line-height: var(--leading-xl);
+}
+
+/* --------------------------------------------------------------- search -- */
+
+.help-search-page .help-search {
+  max-width: none;
+  margin: var(--space-6) 0 var(--space-8);
+}
+
+.help-search-page h1 {
+  margin: 0;
+}
+
+.help-results-summary {
+  margin: 0 0 var(--space-4);
+  color: var(--muted);
+}
+
+.help-results-summary:empty {
+  display: none;
+}
+
+.help-search-page .help-error,
+.help-search-page .help-empty {
+  margin-top: var(--space-2);
+}

@@ -1,6 +1,7 @@
 import {infiniteQueryOptions, queryOptions} from '@tanstack/react-query';
 
-import type {AdminUser, AuditRow, JobsPage, PermissionRow, RoleRow} from '../lib/types';
+import type {ArticleStatus, KbManageArticle, KbManageArticlesPage, KbManageCategory, KbSnippetsPage} from '../lib/kb-types';
+import type {AdminUser, AuditRow, PermissionRow, RoleRow} from '../lib/types';
 import {refreshSession} from '../platform/browser';
 import {api, read} from './api';
 import type {Me} from './shared';
@@ -12,7 +13,9 @@ import type {Me} from './shared';
  * screen renders from the cache. Kept apart from the screens so the routes can
  * import them without pulling the (lazy) screen code into the first bundle.
  *
- * A save invalidates by key prefix (`['users']`, `['jobs']`, `['roles']`).
+ * A save invalidates by key prefix (`['users']`, `['kb']`, `['roles']`): every
+ * knowledge-base save invalidates `['kb']`, so the lists, the editor and the
+ * overview's tiles all refresh.
  */
 
 /** Who is signed in, and what the portal may SHOW them. Shared by every screen. */
@@ -47,10 +50,6 @@ export const firstUsersQuery = queryOptions({
   queryKey: ['users', 'first'],
   queryFn: () => read<UsersPage>(api.admin.users.$get({query: {before: '', email: '', status: ''}})),
 });
-export const firstJobsQuery = queryOptions({
-  queryKey: ['jobs', 'manage', 'first'],
-  queryFn: () => read<JobsPage>(api.jobs.manage.$get({query: {before: ''}})),
-});
 export const firstAuditQuery = queryOptions({
   queryKey: ['audit', 'first'],
   queryFn: () => read<AuditPage>(api.admin.audit.$get({query: {before: ''}})),
@@ -66,13 +65,50 @@ export const usersQuery = (filter: {email: string; status: string}) =>
     getNextPageParam: last => (last.nextBefore ? String(last.nextBefore) : undefined),
   });
 
-/** `/dashboard/jobs`: every job, open and closed. */
-export const manageJobsQuery = infiniteQueryOptions({
-  queryKey: ['jobs', 'manage'],
-  initialPageParam: undefined as string | undefined,
-  queryFn: ({pageParam}) => read<JobsPage>(api.jobs.manage.$get({query: {before: pageParam ?? ''}})),
-  getNextPageParam: last => (last.nextBefore ? String(last.nextBefore) : undefined),
+// ---------------------------------------------------------- knowledge base --
+
+/** The Articles screen's filters (and the overview's drafts tile): part of the query key. */
+export type KbArticleFilters = {status: ArticleStatus | ''; categoryId: number | ''; q: string};
+/** The Articles screen's first view (its route warms it). */
+export const KB_ALL_ARTICLES: KbArticleFilters = {status: '', categoryId: '', q: ''};
+/** The drafts filter: the overview's "Drafts" tile reads its first page, under the screen's own key. */
+export const KB_DRAFTS: KbArticleFilters = {status: 'draft', categoryId: '', q: ''};
+
+/** `/dashboard/articles`: every article (any status), newest first, 20 a page. */
+export const kbArticlesQuery = (filters: KbArticleFilters) =>
+  infiniteQueryOptions({
+    queryKey: ['kb', 'articles', filters],
+    initialPageParam: undefined as string | undefined,
+    queryFn: ({pageParam}) =>
+      read<KbManageArticlesPage>(
+        api.kb.manage.articles.$get({
+          query: {status: filters.status, category: String(filters.categoryId), q: filters.q, before: pageParam ?? ''},
+        })
+      ),
+    getNextPageParam: last => (last.next ? String(last.next) : undefined),
+  });
+
+/** One article with its body, for the editor. */
+export const kbArticleQuery = (id: number) =>
+  queryOptions({
+    queryKey: ['kb', 'article', id],
+    queryFn: () => read<{article: KbManageArticle}>(api.kb.manage.articles[':id'].$get({param: {id: String(id)}})),
+  });
+
+/** Every category (≤ 100) with its published and total article counts. */
+export const kbCategoriesQuery = queryOptions({
+  queryKey: ['kb', 'categories'],
+  queryFn: () => read<{categories: KbManageCategory[]}>(api.kb.manage.categories.$get()),
 });
+
+/** `/dashboard/snippets`: short answers the assistant may use, newest first. */
+export const kbSnippetsQuery = (q: string) =>
+  infiniteQueryOptions({
+    queryKey: ['kb', 'snippets', q],
+    initialPageParam: undefined as string | undefined,
+    queryFn: ({pageParam}) => read<KbSnippetsPage>(api.kb.manage.snippets.$get({query: {q, before: pageParam ?? ''}})),
+    getNextPageParam: last => (last.next ? String(last.next) : undefined),
+  });
 
 /** `/dashboard/activity`: the audit log, newest first. */
 export const auditQuery = infiniteQueryOptions({

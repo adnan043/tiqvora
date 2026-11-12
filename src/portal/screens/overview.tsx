@@ -1,7 +1,7 @@
-import {useQuery} from '@tanstack/react-query';
+import {useInfiniteQuery, useQuery} from '@tanstack/react-query';
 import {Link} from '@tanstack/react-router';
 
-import {firstAuditQuery, firstJobsQuery, firstUsersQuery, healthQuery, siteQuery, twoFactorQuery} from '../queries';
+import {firstAuditQuery, firstUsersQuery, healthQuery, KB_DRAFTS, kbArticlesQuery, kbCategoriesQuery, siteQuery, twoFactorQuery} from '../queries';
 import {ago, pageCount, useMe, when} from '../shared';
 import {Badge, buttonClass, Card, EmptyState, ErrorNote, Icon, type IconName, LoadingBlock, Notice, PageHeader, ProgressBar, Stat} from '../ui';
 
@@ -24,7 +24,13 @@ export function Overview() {
   const twoFactor = useQuery(twoFactorQuery);
   // Under the screens' own query keys, so a save there refreshes these too.
   const users = useQuery({...firstUsersQuery, enabled: Boolean(abilities?.manageUsers)});
-  const jobs = useQuery({...firstJobsQuery, enabled: Boolean(abilities?.manageJobs)});
+  // The knowledge base: published = the categories' counters (kept on write),
+  // drafts = the first page of the drafts filter ("20+"). Never a count query.
+  const canEditKb = Boolean(abilities?.editKnowledge);
+  const categories = useQuery({...kbCategoriesQuery, enabled: canEditKb});
+  const drafts = useInfiniteQuery({...kbArticlesQuery(KB_DRAFTS), enabled: canEditKb});
+  const published = categories.data ? categories.data.categories.reduce((sum, category) => sum + category.articleCount, 0) : null;
+  const firstDrafts = drafts.data?.pages[0];
   const activity = useQuery({...firstAuditQuery, enabled: Boolean(abilities?.readAudit)});
   const recent = activity.data?.events.slice(0, 6) ?? [];
   const firstName = viewer?.name?.split(/\s+/)[0];
@@ -53,14 +59,22 @@ export function Overview() {
       to: '/users',
       icon: 'user-plus',
     });
-  if (abilities?.manageJobs)
+  if (canEditKb) {
     steps.push({
-      label: 'Post your first job',
-      detail: 'It shows on the public job board at once.',
-      done: jobs.data ? jobs.data.jobs.length > 0 : undefined,
-      to: '/jobs',
-      icon: 'briefcase',
+      label: 'Add your first category',
+      detail: 'Group articles the way customers look for them.',
+      done: categories.data ? categories.data.categories.length > 0 : undefined,
+      to: '/categories',
+      icon: 'layers',
     });
+    steps.push({
+      label: 'Publish your first article',
+      detail: 'It shows in the help center at once.',
+      done: published === null ? undefined : published > 0,
+      to: '/articles',
+      icon: 'file',
+    });
+  }
   const done = steps.filter(step => step.done).length;
   const setupLeft = steps.some(step => step.done === false);
 
@@ -75,10 +89,10 @@ export function Overview() {
               <Icon name="globe" size={18} />
               View the website
             </a>
-            {abilities?.manageJobs && (
-              <Link className={buttonClass()} to="/jobs">
+            {canEditKb && (
+              <Link className={buttonClass()} to="/articles" search={{new: true}}>
                 <Icon name="plus" size={18} />
-                Post a job
+                Write an article
               </Link>
             )}
           </>
@@ -102,13 +116,22 @@ export function Overview() {
             to="/users"
           />
         )}
-        {abilities?.manageJobs && (
+        {canEditKb && (
           <Stat
-            label="Open jobs"
-            icon="briefcase"
-            value={jobs.data ? String(jobs.data.jobs.filter(job => job.status === 'open').length) + (jobs.data.nextBefore ? '+' : '') : null}
-            hint="On the public job board"
-            to="/jobs"
+            label="Published articles"
+            icon="file"
+            value={categories.error ? '—' : published === null ? null : String(published)}
+            hint={categories.data ? `In ${categories.data.categories.length} categor${categories.data.categories.length === 1 ? 'y' : 'ies'}` : undefined}
+            to="/articles"
+          />
+        )}
+        {canEditKb && (
+          <Stat
+            label="Drafts"
+            icon="pencil"
+            value={drafts.error ? '—' : (pageCount(firstDrafts?.articles, Boolean(firstDrafts?.next)) ?? null)}
+            hint="Not in the help center yet"
+            to="/articles"
           />
         )}
         <Stat
@@ -196,7 +219,10 @@ export function Overview() {
                     <Icon name="check" size={14} />
                   </span>
                   <span className="list-row-text">
-                    <span className="list-row-title">{step.label}</span>
+                    <span className="list-row-title">
+                      <span className="visually-hidden">{step.done ? 'Done: ' : 'To do: '}</span>
+                      {step.label}
+                    </span>
                     <span className="list-row-sub">{step.detail}</span>
                   </span>
                   {step.to && !step.done && <Icon name="chevron-right" size={16} className="muted" />}

@@ -20,18 +20,48 @@ import {abilitiesOf, type AbilitiesOf, codenamesOf, CORE_PERMISSIONS, definePerm
  */
 export const CATALOGUE = definePermissions({
   ...CORE_PERMISSIONS,
-  /** Post, edit, close and delete jobs (`/dashboard/jobs`). */
-  JOB_MANAGE: {
-    codename: 'site:job:manage',
-    title: 'Manage jobs',
-    description: 'Post, edit, close and delete jobs on the job board.',
-    group: 'Jobs',
-    ability: 'manageJobs',
+  // The help desk. `agent` is the "Support agent" role (migration
+  // 20261112110356_helpdesk_knowledge_base). The job board's `site:job:manage`
+  // is retired: the job board was removed, and nothing checks it any more.
+  /** The inbox: tickets, replies, assignment and status (`/dashboard/inbox`). */
+  HELPDESK_INBOX: {
+    codename: 'site:helpdesk:inbox',
+    title: 'Work the help desk inbox',
+    description: 'See and answer tickets, assign them and change their status.',
+    group: 'Help desk',
+    ability: 'useInbox',
+    roles: ['admin', 'agent'],
+  },
+  /** Categories, articles, snippets, imports, approving AI drafts (`/dashboard/articles`…). */
+  KB_EDIT: {
+    codename: 'site:kb:edit',
+    title: 'Edit the knowledge base',
+    description: 'Write, publish and archive help articles, categories and snippets, and import them.',
+    group: 'Help desk',
+    ability: 'editKnowledge',
+    roles: ['admin', 'agent'],
+  },
+  /** Assistant settings, branding, human-only topics, Test Lab. */
+  HELPDESK_SETTINGS: {
+    codename: 'site:helpdesk:settings',
+    title: 'Manage the help desk',
+    description: 'Change the assistant, the help center words, human-only topics and the Test Lab.',
+    group: 'Help desk',
+    ability: 'manageHelpdesk',
+    roles: ['admin'],
+  },
+  /** Analytics and Knowledge Health. */
+  HELPDESK_REPORTS: {
+    codename: 'site:helpdesk:reports',
+    title: 'See help desk reports',
+    description: 'Open the help desk analytics and Knowledge Health.',
+    group: 'Help desk',
+    ability: 'seeHelpdeskReports',
     roles: ['admin'],
   },
 });
 
-/** Codenames by key: `PERMISSIONS.JOB_MANAGE` is `'site:job:manage'`. */
+/** Codenames by key: `PERMISSIONS.KB_EDIT` is `'site:kb:edit'`. */
 export const PERMISSIONS = codenamesOf(CATALOGUE);
 
 export type Codename = (typeof PERMISSIONS)[keyof typeof PERMISSIONS];

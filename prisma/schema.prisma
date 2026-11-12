@@ -37,20 +37,20 @@ datasource db {
 /// A person with an account on this site. `email` is stored trimmed and
 /// lower-cased. Only the user and holders of `site:user:read` ever see it.
 model User {
-  id              Int       @id @default(autoincrement())
-  email           String    @unique @db.VarChar(254)
+  id                Int       @id @default(autoincrement())
+  email             String    @unique @db.VarChar(254)
   /// The platform's opaque id, on the site owner's account only (src/platform/auth/owner.ts).
-  platformOwnerId String?   @unique @map("platform_owner_id") @db.VarChar(64)
+  platformOwnerId   String?   @unique @map("platform_owner_id") @db.VarChar(64)
   /// A versioned hash string (src/platform/auth/password.ts).
-  passwordHash    String    @map("password_hash") @db.VarChar(255)
-  name            String    @db.VarChar(80)
+  passwordHash      String    @map("password_hash") @db.VarChar(255)
+  name              String    @db.VarChar(80)
   /// `active` or `suspended`.
-  status          String    @default("active") @db.VarChar(16)
-  emailVerifiedAt DateTime? @map("email_verified_at")
+  status            String    @default("active") @db.VarChar(16)
+  emailVerifiedAt   DateTime? @map("email_verified_at")
   /// Bumped on password change, logout-all and suspension: every access token
   /// carrying an older value stops working at once.
-  sessionVersion  Int       @default(1) @map("session_version")
-  lastLoginAt     DateTime? @map("last_login_at")
+  sessionVersion    Int       @default(1) @map("session_version")
+  lastLoginAt       DateTime? @map("last_login_at")
   /// Two-step sign-in (src/platform/auth/two-factor.ts): the authenticator secret, SEALED
   /// (never in clear), set once the user confirmed a first code (`totpEnabledAt`).
   totpSecretSealed  String?   @map("totp_secret_sealed") @db.VarChar(255)
@@ -59,8 +59,8 @@ model User {
   totpEnabledAt     DateTime? @map("totp_enabled_at")
   /// The 30-second step of the last accepted code: that code (and older) never works again.
   totpLastStep      Int?      @map("totp_last_step")
-  createdAt       DateTime  @default(now()) @map("created_at")
-  updatedAt       DateTime  @updatedAt @map("updated_at")
+  createdAt         DateTime  @default(now()) @map("created_at")
+  updatedAt         DateTime  @updatedAt @map("updated_at")
 
   roles              UserRole[]
   refreshTokens      RefreshToken[]
@@ -430,4 +430,161 @@ model Job {
 
   @@index([status, id])
   @@map("jobs")
+}
+
+// ---------------------------------------------------------------------------
+// Help desk: settings and the knowledge base (Phase 1). Search is Postgres
+// full-text search on `kb_chunks` through an expression GIN index created in
+// the migration SQL (src/server/kb/search.ts holds the one matching expression).
+
+/// The help desk's settings: ONE row, id = 1 (CHECK in the migration).
+/// Read through the Site Cache (`helpdesk:settings`), cleared on save.
+model HelpdeskSettings {
+  id                  Int      @id @default(1)
+  /// The assistant's name in the chat panel.
+  assistantName       String   @default("Assistant") @map("assistant_name") @db.VarChar(60)
+  greeting            String   @default("Hi! Ask me anything about our products and orders.") @db.VarChar(300)
+  /// `friendly`, `neutral` or `formal`.
+  tone                String   @default("friendly") @db.VarChar(10)
+  /// Hand off below this: `low`, `medium` or `high`.
+  confidenceThreshold String   @default("medium") @map("confidence_threshold") @db.VarChar(10)
+  /// `anthropic` or `openai`.
+  provider            String   @default("anthropic") @db.VarChar(12)
+  /// From the allow-list in code; empty = the provider's default.
+  model               String   @default("") @db.VarChar(60)
+  monthlyCapCents     Int      @default(2000) @map("monthly_cap_cents")
+  launcherLabel       String   @default("Support") @map("launcher_label") @db.VarChar(30)
+  businessHours       String   @default("") @map("business_hours") @db.VarChar(200)
+  /// The help center's own words (`/help/`).
+  helpTitle           String   @default("How can we help?") @map("help_title") @db.VarChar(120)
+  helpIntro           String   @default("Search our guides, or ask the assistant.") @map("help_intro") @db.VarChar(300)
+  updatedBy           Int?     @map("updated_by")
+  updatedAt           DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  @@map("helpdesk_settings")
+}
+
+/// Quick-reply chips shown in the chat panel, in order.
+model HelpdeskQuickReply {
+  id        Int      @id @default(autoincrement())
+  label     String   @db.VarChar(60)
+  position  Int      @default(0)
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  @@index([position, id])
+  @@map("helpdesk_quick_replies")
+}
+
+/// Topics the assistant never answers: a keyword match hands off to a person.
+model HelpdeskHumanTopic {
+  id        Int      @id @default(autoincrement())
+  /// Lower-case, trimmed.
+  keyword   String   @unique @db.VarChar(60)
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  @@map("helpdesk_human_topics")
+}
+
+model KbCategory {
+  id           Int         @id @default(autoincrement())
+  name         String      @db.VarChar(80)
+  /// URL name, unique: `/help/<slug>/`.
+  slug         String      @unique @db.VarChar(80)
+  description  String      @default("") @db.VarChar(300)
+  /// A name from ICON_NAMES (src/portal/ui/icon.tsx).
+  icon         String      @default("book") @db.VarChar(30)
+  position     Int         @default(0)
+  /// PUBLISHED articles in it, kept on write (never count() per request).
+  articleCount Int         @default(0) @map("article_count")
+  createdAt    DateTime    @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt    DateTime    @updatedAt @map("updated_at") @db.Timestamptz(3)
+  articles     KbArticle[]
+
+  @@index([position, id])
+  @@map("kb_categories")
+}
+
+model KbArticle {
+  id              Int        @id @default(autoincrement())
+  /// Restrict: a category with articles can't be deleted (move them first).
+  categoryId      Int        @map("category_id")
+  title           String     @db.VarChar(160)
+  /// URL name, unique: `/help/articles/<slug>/`.
+  slug            String     @unique @db.VarChar(160)
+  /// Markdown; the validator caps it at 50,000 characters and 60,000 UTF-8 bytes.
+  body            String     @db.Text
+  excerpt         String     @default("") @db.VarChar(300)
+  /// `draft`, `published` or `archived` (CHECK in the migration).
+  status          String     @default("draft") @db.VarChar(10)
+  publishedAt     DateTime?  @map("published_at") @db.Timestamptz(3)
+  lastReviewedAt  DateTime   @default(now()) @map("last_reviewed_at") @db.Timestamptz(3)
+  helpfulCount    Int        @default(0) @map("helpful_count")
+  notHelpfulCount Int        @default(0) @map("not_helpful_count")
+  viewCount       Int        @default(0) @map("view_count")
+  /// `users.id`. No foreign key: an article outlives its author (like `jobs.created_by`).
+  createdBy       Int        @map("created_by")
+  updatedBy       Int        @map("updated_by")
+  createdAt       DateTime   @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt       DateTime   @updatedAt @map("updated_at") @db.Timestamptz(3)
+  category        KbCategory @relation(fields: [categoryId], references: [id], onDelete: Restrict)
+  chunks          KbChunk[]
+
+  /// A category's articles by status (the FK first).
+  @@index([categoryId, status, id])
+  /// All articles by status, keyset by id (public list, manage filter).
+  @@index([status, id])
+  /// Popular published articles.
+  @@index([status, viewCount(sort: Desc), id(sort: Desc)])
+  @@map("kb_articles")
+}
+
+/// Short Q&A the assistant may use; never shown publicly.
+model KbSnippet {
+  id        Int       @id @default(autoincrement())
+  question  String    @db.VarChar(300)
+  answer    String    @db.VarChar(2000)
+  createdBy Int       @map("created_by")
+  updatedBy Int       @map("updated_by")
+  createdAt DateTime  @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt DateTime  @updatedAt @map("updated_at") @db.Timestamptz(3)
+  chunks    KbChunk[]
+
+  @@map("kb_snippets")
+}
+
+/// What search and the assistant read: a PUBLISHED article split by heading,
+/// or one snippet. Exactly one of articleId / snippetId (CHECK). Rebuilt in the
+/// same transaction as the article or snippet it comes from.
+model KbChunk {
+  id        Int        @id @default(autoincrement())
+  articleId Int?       @map("article_id")
+  snippetId Int?       @map("snippet_id")
+  position  Int        @default(0)
+  heading   String     @default("") @db.VarChar(200)
+  text      String     @db.VarChar(2000)
+  createdAt DateTime   @default(now()) @map("created_at") @db.Timestamptz(3)
+  article   KbArticle? @relation(fields: [articleId], references: [id], onDelete: Cascade)
+  snippet   KbSnippet? @relation(fields: [snippetId], references: [id], onDelete: Cascade)
+
+  @@index([articleId, position])
+  @@index([snippetId])
+  @@map("kb_chunks")
+}
+
+/// Request counters per minute, for public routes with no account to limit by
+/// (help-center search, feedback, views; the assistant later): per client (a
+/// keyed IP hash) and site-wide. One conditional upsert per bucket
+/// (src/server/rate-window.ts); the hourly `rate-windows-cleanup` background job
+/// deletes minutes older than an hour.
+model RateWindow {
+  /// What is counted: `kb-search` (site-wide), `s:<ip hash>` (one client), …
+  bucket String   @db.VarChar(40)
+  /// The minute, truncated.
+  minute DateTime @db.Timestamptz(3)
+  count  Int      @default(0)
+
+  @@id([bucket, minute])
+  @@map("rate_windows")
 }

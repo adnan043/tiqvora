@@ -1,4 +1,8 @@
 {
-  "lists": {},
-  "schedules": {}
+  "lists": {
+    "rate-windows-cleanup": {"retries": 2, "concurrency": 1}
+  },
+  "schedules": {
+    "rate-windows-cleanup": {"every": "hour", "label": "Delete old rate-limit counters"}
+  }
 }

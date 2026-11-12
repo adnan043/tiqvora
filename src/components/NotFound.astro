@@ -15,8 +15,17 @@ const {site} = Astro.props;
 
 <main id="main" tabindex="-1" class="wrap narrow section center">
   <BrandMark site={site} size={56} />
-  <p class="eyebrow">404</p>
+  <p class="eyebrow not-found-code">404</p>
   <h1>This page does not exist</h1>
   <p class="lede">The page you were looking for isn’t part of {site?.name ?? 'this site'}.</p>
-  <p><a class="button" href="/" data-astro-prefetch>Back to home</a></p>
+  <p class="not-found-actions">
+    <a class="button" href="/help/">Browse the help center</a>
+    <a class="button button-secondary" href="/" data-astro-prefetch>Back to home</a>
+  </p>
+  <form class="not-found-search" action="/help/search/" method="get" role="search" novalidate>
+    <div class="field">
+      <label for="not-found-q">Or search for an answer</label>
+      <input id="not-found-q" name="q" type="search" maxlength="120" placeholder="For example: change my delivery address" />
+    </div>
+  </form>
 </main>

@@ -4,21 +4,23 @@
  * work per visit) and made of sections. Words in `HOME`, `src/content/site.ts`;
  * styles in `src/styles/home.css` (every rule under `.home`).
  *
- * What changes often is filled in by the browser after load, from the Site API:
- *   - the visitor (`<Base isStatic>`): signed-in users see "Open your dashboard"
- *     (`data-user-only`), guests "Create an account" (`data-guest-only`)
- *   - open roles (a `data-live` section, below)
- * The latest posts come from `src/content/blog/` at build time.
- * A section with no data stays hidden.
+ * The search box is a plain GET form to the help center's search page
+ * (`/help/search/?q=`). What changes often is filled in by the browser after
+ * load, from ONE public read (`/site-api/kb/home`, cached on the server):
+ *   - the category links under the search box (`data-live="topics"`)
+ *   - the popular articles (`data-live="popular"`)
+ * Rows are built with `textContent` from a `<template>`, never HTML from the
+ * answer. A section with no data, or a failed read, stays hidden: the page is
+ * complete without it. The latest posts come from `src/content/blog/` at build time.
  */
 import '../styles/home.css';
 
 import Cover from '../components/Cover.astro';
-import HeroVisual from '../components/home/HeroVisual.astro';
 import Icon, {type IconName} from '../components/home/Icon.astro';
 import {HOME, withName} from '../content/site';
 import Base from '../layouts/Base.astro';
 import {staticContext} from '../server/page';
+import {KB_LIMITS} from '../lib/kb-types';
 import {formatDate, postHref, publishedPosts} from '../lib/posts';
 
 export const prerender = true;
@@ -26,72 +28,72 @@ export const prerender = true;
 const {site, viewer} = await staticContext(Astro.request);
 const name = site?.name ?? 'My site';
 const latest = (await publishedPosts()).slice(0, 3);
-
-// The headline, split around the highlighted words (`HOME.hero.highlight`).
-const {title, highlight} = HOME.hero;
-const at = highlight ? title.indexOf(highlight) : -1;
-const headline =
-  at < 0
-    ? {before: title, mark: '', after: ''}
-    : {before: title.slice(0, at), mark: highlight, after: title.slice(at + highlight.length)};
 ---
 
 <Base site={site} viewer={viewer} isStatic>
   <main id="main" tabindex="-1" class="home">
-    <section class="home-hero">
-      <div class="wrap home-hero-grid">
-        <div class="home-hero-copy">
-          <p class="home-eyebrow" data-brand-text={HOME.hero.eyebrow}>{withName(HOME.hero.eyebrow, name)}</p>
-          <h1>
-            {headline.before}{headline.mark && <mark>{headline.mark}</mark>}{headline.after}
-          </h1>
-          <p class="home-lede">{HOME.hero.body}</p>
-          <div class="home-actions" data-guest-only>
-            <a class="button home-button-lg" href="/account/register/" data-astro-prefetch>
-              {HOME.hero.guest.primary}
-              <Icon name="arrow-right" size={18} />
-            </a>
-            <a class="button ghost home-button-lg" href="#how">{HOME.hero.guest.secondary}</a>
+    <section class="home-hero" aria-labelledby="hero-title">
+      <div class="wrap narrow home-hero-inner">
+        <p class="home-eyebrow" data-brand-text={HOME.hero.eyebrow}>{withName(HOME.hero.eyebrow, name)}</p>
+        <h1 id="hero-title">{HOME.hero.title}</h1>
+        <p class="home-lede">{HOME.hero.body}</p>
+
+        <form class="home-search-form" action="/help/search/" method="get" role="search" novalidate data-home-search>
+          <label class="home-search-label" for="home-q">{HOME.hero.label}</label>
+          <div class="home-search">
+            <Icon name="search" size={20} class="home-search-icon" />
+            <input
+              id="home-q"
+              name="q"
+              type="search"
+              autocomplete="off"
+              enterkeyhint="search"
+              maxlength={KB_LIMITS.searchQuery}
+              placeholder={HOME.hero.placeholder}
+              aria-describedby="home-q-error"
+            />
+            <button class="button" type="submit">{HOME.hero.button}</button>
           </div>
-          <div class="home-actions" data-user-only hidden>
-            <a class="button home-button-lg" href="/dashboard">
-              {HOME.hero.user.primary}
-              <Icon name="arrow-right" size={18} />
-            </a>
-            <a class="button ghost home-button-lg" href="/blog/" data-astro-prefetch>{HOME.hero.user.secondary}</a>
-          </div>
-          <p class="home-note" data-guest-only>{HOME.hero.note}</p>
+          <p class="home-search-error" id="home-q-error" data-too-short={HOME.hero.tooShort} aria-live="polite"></p>
+        </form>
+
+        <div class="home-topics" data-live="topics" hidden>
+          <span class="home-topics-label">{HOME.hero.topics}</span>
+          <ul class="home-topics-list" data-list></ul>
         </div>
-        <div class="home-hero-visual">
-          <HeroVisual name={name} />
-        </div>
+
+        <a class="home-browse" href="/help/">
+          {HOME.hero.browse}
+          <Icon name="arrow-right" size={16} />
+        </a>
       </div>
     </section>
 
-    <section class="home-section" aria-labelledby="features-title">
+    <section class="home-section" data-live="popular" aria-labelledby="popular-title" hidden>
       <div class="wrap">
-        <div class="home-head">
-          <p class="home-eyebrow">{HOME.features.eyebrow}</p>
-          <h2 id="features-title">{HOME.features.title}</h2>
-          <p class="home-sub">{HOME.features.body}</p>
+        <div class="home-head home-head-row">
+          <h2 id="popular-title">{HOME.popular.title}</h2>
+          <a class="home-more" href="/help/">
+            {HOME.popular.link}
+            <Icon name="arrow-right" size={16} />
+          </a>
         </div>
-        <ul class="home-features">
-          {
-            HOME.features.items.map(feature => (
-              <li class="home-feature">
-                <span class="home-icon-tile">
-                  <Icon name={feature.icon as IconName} />
-                </span>
-                <h3>{feature.title}</h3>
-                <p>{feature.body}</p>
-              </li>
-            ))
-          }
-        </ul>
+        <ul class="home-articles" data-list></ul>
+        <template data-row>
+          <li>
+            <a class="home-article">
+              <span class="home-article-text">
+                <span class="home-article-title" data-title></span>
+                <span class="home-article-meta" data-meta></span>
+              </span>
+              <Icon name="chevron-right" size={20} class="home-article-chevron" />
+            </a>
+          </li>
+        </template>
       </div>
     </section>
 
-    <section class="home-section home-band" id="how" aria-labelledby="how-title">
+    <section class="home-section home-band" aria-labelledby="how-title">
       <div class="wrap">
         <div class="home-head">
           <p class="home-eyebrow">{HOME.how.eyebrow}</p>
@@ -101,7 +103,10 @@ const headline =
           {
             HOME.how.steps.map((step, i) => (
               <li class="home-step">
-                <span class="home-step-num">{String(i + 1).padStart(2, '0')}</span>
+                <span class="home-icon-tile">
+                  <Icon name={step.icon as IconName} />
+                </span>
+                <p class="home-step-num">{String(i + 1).padStart(2, '0')}</p>
                 <h3>{step.title}</h3>
                 <p>{step.body}</p>
               </li>
@@ -143,19 +148,6 @@ const headline =
       )
     }
 
-    <section class="home-section" data-live="jobs" aria-labelledby="jobs-title" hidden>
-      <div class="wrap">
-        <div class="home-head home-head-row">
-          <h2 id="jobs-title">{HOME.jobs.title}</h2>
-          <a class="home-more" href="/jobs/">
-            {HOME.jobs.link}
-            <Icon name="arrow-right" size={16} />
-          </a>
-        </div>
-        <ul class="job-list" data-list data-remote-label={HOME.jobs.remote}></ul>
-      </div>
-    </section>
-
     <section class="home-section" aria-labelledby="faq-title">
       <div class="wrap home-faq-grid">
         <div class="home-head">
@@ -178,16 +170,16 @@ const headline =
       </div>
     </section>
 
-    <section class="home-section home-section-last" data-guest-only aria-labelledby="cta-title">
+    <section class="home-section home-section-last" aria-labelledby="cta-title">
       <div class="wrap">
         <div class="home-cta">
           <div>
-            <h2 id="cta-title" data-brand-text={HOME.cta.title}>{withName(HOME.cta.title, name)}</h2>
+            <h2 id="cta-title">{HOME.cta.title}</h2>
             <p>{HOME.cta.body}</p>
           </div>
           <div class="home-cta-actions">
-            <a class="button home-button-lg home-cta-primary" href="/account/register/" data-astro-prefetch>{HOME.cta.primary}</a>
-            <a class="button home-button-lg home-cta-ghost" href="/account/login/" data-astro-prefetch>{HOME.cta.secondary}</a>
+            <a class="button button-lg" href="/help/">{HOME.cta.primary}</a>
+            <a class="button button-secondary button-lg" href="/blog/" data-astro-prefetch>{HOME.cta.secondary}</a>
           </div>
         </div>
       </div>
@@ -196,46 +188,95 @@ const headline =
 </Base>
 
 <script>
-  import type {JobsPage} from '../lib/types';
+  import {siteFetch} from '../platform/browser';
+  import type {KbHome} from '../lib/kb-types';
+
+  const MIN_QUERY = 2;
+  const MAX_TOPICS = 6;
+  const MAX_POPULAR = 6;
+
+  /** The search box: a plain GET form; a query under 2 characters stays here with a message. */
+  function bindSearch(form: HTMLFormElement) {
+    const input = form.querySelector<HTMLInputElement>('input[name="q"]');
+    const error = form.querySelector<HTMLElement>('#home-q-error');
+    if (!input || !error) return;
+    let shown = false;
+    const check = () => {
+      const ok = input.value.trim().length >= MIN_QUERY;
+      error.textContent = ok ? '' : error.dataset.tooShort || '';
+      if (ok) input.removeAttribute('aria-invalid');
+      else input.setAttribute('aria-invalid', 'true');
+      form.classList.toggle('is-invalid', !ok);
+      return ok;
+    };
+    form.addEventListener('submit', event => {
+      input.value = input.value.trim();
+      if (check()) return;
+      // Before the ClientRouter's own submit handler (on document): nothing is sent.
+      event.preventDefault();
+      shown = true;
+      input.focus();
+    });
+    input.addEventListener('input', () => {
+      if (shown) check();
+    });
+  }
 
   // Client navigation (ClientRouter): a bundled script runs once, so this page's code runs on
   // every `astro:page-load` (the first load, each navigation, back/forward) while it is this page.
   document.addEventListener('astro:page-load', () => {
-    if (!document.querySelector('[data-live="jobs"]')) return;
-    /** One element with text: never HTML from an answer. */
-    const el = <K extends keyof HTMLElementTagNameMap>(tag: K, className = '', text = '') => {
-      const node = document.createElement(tag);
-      if (className) node.className = className;
-      if (text) node.textContent = text;
-      return node;
-    };
+    const form = document.querySelector<HTMLFormElement>('[data-home-search]');
+    if (!form) return;
+    bindSearch(form);
 
-    async function live<T>(name: string, path: string, render: (data: T, list: HTMLElement) => number) {
-      const section = document.querySelector<HTMLElement>(`[data-live="${name}"]`);
-      const list = section?.querySelector<HTMLElement>('[data-list]');
-      if (!section || !list) return;
+    const topics = document.querySelector<HTMLElement>('[data-live="topics"]');
+    const popular = document.querySelector<HTMLElement>('[data-live="popular"]');
+    if (!topics && !popular) return;
+
+    void (async () => {
+      let data: KbHome;
       try {
-        const res = await fetch(path, {headers: {accept: 'application/json'}});
+        const res = await siteFetch('/site-api/kb/home', {headers: {accept: 'application/json'}});
         if (!res.ok) return;
-        if (render((await res.json()) as T, list) > 0) section.hidden = false;
+        data = (await res.json()) as KbHome;
       } catch {
-        // The section stays hidden: the page is complete without it.
+        // Both sections stay hidden: the page is complete without them.
+        return;
       }
-    }
 
-    void live<JobsPage>('jobs', '/site-api/jobs', (data, list) => {
-      for (const job of data.jobs.slice(0, 3)) {
-        const row = el('a', 'job-row');
-        row.href = `/jobs/${encodeURIComponent(job.slug)}/`;
-        const text = el('div');
-        text.append(el('h3', 'job-title', job.title), el('p', 'muted', `${job.company} · ${job.location}`));
-        row.append(text);
-        if (job.remote) row.append(el('span', 'chip chip-tag', list.dataset.remoteLabel || 'Remote'));
-        const item = el('li');
-        item.append(row);
-        list.append(item);
+      const topicList = topics?.querySelector<HTMLElement>('[data-list]');
+      if (topics && topicList && Array.isArray(data.categories)) {
+        const items = data.categories.filter(c => c.articleCount > 0).slice(0, MAX_TOPICS);
+        topicList.replaceChildren(
+          ...items.map(category => {
+            const link = document.createElement('a');
+            link.className = 'home-topic';
+            link.href = `/help/${encodeURIComponent(category.slug)}/`;
+            link.textContent = category.name;
+            const item = document.createElement('li');
+            item.append(link);
+            return item;
+          }),
+        );
+        topics.hidden = items.length === 0;
       }
-      return Math.min(3, data.jobs.length);
-    });
+
+      const list = popular?.querySelector<HTMLElement>('[data-list]');
+      const template = popular?.querySelector<HTMLTemplateElement>('template[data-row]');
+      if (popular && list && template && Array.isArray(data.popular)) {
+        const rows = data.popular.slice(0, MAX_POPULAR).map(article => {
+          const row = template.content.cloneNode(true) as DocumentFragment;
+          const link = row.querySelector<HTMLAnchorElement>('a');
+          const title = row.querySelector<HTMLElement>('[data-title]');
+          const meta = row.querySelector<HTMLElement>('[data-meta]');
+          if (link) link.href = `/help/articles/${encodeURIComponent(article.slug)}/`;
+          if (title) title.textContent = article.title;
+          if (meta) meta.textContent = article.category?.name ?? '';
+          return row;
+        });
+        list.replaceChildren(...rows);
+        popular.hidden = rows.length === 0;
+      }
+    })();
   });
 </script>

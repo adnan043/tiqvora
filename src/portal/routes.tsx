@@ -18,10 +18,13 @@ import {logout} from '../platform/browser';
 import {
   auditQuery,
   firstAuditQuery,
-  firstJobsQuery,
   firstUsersQuery,
   healthQuery,
-  manageJobsQuery,
+  KB_ALL_ARTICLES,
+  KB_DRAFTS,
+  kbArticlesQuery,
+  kbCategoriesQuery,
+  kbSnippetsQuery,
   meQuery,
   permissionsQuery,
   rolesQuery,
@@ -125,9 +128,17 @@ const NAV_GROUPS: {label: string; items: NavItem[]}[] = [
     ],
   },
   {
+    label: 'Knowledge base',
+    items: [
+      {to: '/articles', label: 'Articles', icon: 'file', ability: 'editKnowledge'},
+      {to: '/categories', label: 'Categories', icon: 'menu', ability: 'editKnowledge'},
+      {to: '/snippets', label: 'Snippets', icon: 'zap', ability: 'editKnowledge'},
+      {to: '/import', label: 'Import', icon: 'database', ability: 'editKnowledge'},
+    ],
+  },
+  {
     label: 'Manage',
     items: [
-      {to: '/jobs', label: 'Jobs', icon: 'briefcase', ability: 'manageJobs'},
       {to: '/users', label: 'Users', icon: 'users', ability: 'manageUsers'},
       {to: '/roles', label: 'Roles', icon: 'shield', ability: 'manageRoles'},
       {to: '/activity', label: 'Activity', icon: 'activity', ability: 'readAudit'},
@@ -367,7 +378,9 @@ const overviewRoute = createRoute({
     const can = me?.abilities;
     await warm(
       ...(can?.manageUsers ? [queryClient.ensureQueryData(firstUsersQuery)] : []),
-      ...(can?.manageJobs ? [queryClient.ensureQueryData(firstJobsQuery)] : []),
+      ...(can?.editKnowledge
+        ? [queryClient.ensureQueryData(kbCategoriesQuery), queryClient.ensureInfiniteQueryData(kbArticlesQuery(KB_DRAFTS))]
+        : []),
       ...(can?.readAudit ? [queryClient.ensureQueryData(firstAuditQuery)] : [])
     );
   },
@@ -388,12 +401,38 @@ const accountRoute = createRoute({
     ),
   component: lazyRouteComponent(() => import('./screens/account'), 'Account'),
 });
-const jobsRoute = createRoute({
+// The knowledge base (holders of `site:kb:edit`; the routes' guards enforce it).
+const articlesRoute = createRoute({
   getParentRoute: () => rootRoute,
-  path: '/jobs',
-  staticData: {title: 'Jobs'},
-  loader: ({context: {queryClient}}) => warm(queryClient.ensureInfiniteQueryData(manageJobsQuery)),
-  component: lazyRouteComponent(() => import('./screens/jobs'), 'Jobs'),
+  path: '/articles',
+  staticData: {title: 'Articles'},
+  // `?new=true` (the overview's "Write an article"): open the editor on a blank article.
+  validateSearch: (search: Record<string, unknown>): {new?: boolean} =>
+    search.new === true || search.new === 'true' ? {new: true} : {},
+  loader: ({context: {queryClient}}) =>
+    warm(queryClient.ensureInfiniteQueryData(kbArticlesQuery(KB_ALL_ARTICLES)), queryClient.ensureQueryData(kbCategoriesQuery)),
+  component: lazyRouteComponent(() => import('./screens/articles'), 'Articles'),
+});
+const categoriesRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: '/categories',
+  staticData: {title: 'Categories'},
+  loader: ({context: {queryClient}}) => warm(queryClient.ensureQueryData(kbCategoriesQuery)),
+  component: lazyRouteComponent(() => import('./screens/categories'), 'Categories'),
+});
+const snippetsRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: '/snippets',
+  staticData: {title: 'Snippets'},
+  loader: ({context: {queryClient}}) => warm(queryClient.ensureInfiniteQueryData(kbSnippetsQuery(''))),
+  component: lazyRouteComponent(() => import('./screens/snippets'), 'Snippets'),
+});
+const importRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: '/import',
+  staticData: {title: 'Import'},
+  loader: ({context: {queryClient}}) => warm(queryClient.ensureQueryData(kbCategoriesQuery)),
+  component: lazyRouteComponent(() => import('./screens/import'), 'Import'),
 });
 const usersRoute = createRoute({
   getParentRoute: () => rootRoute,
@@ -434,7 +473,10 @@ const devRoutes = import.meta.env.DEV
 export const routeTree = rootRoute.addChildren([
   overviewRoute,
   accountRoute,
-  jobsRoute,
+  articlesRoute,
+  categoriesRoute,
+  snippetsRoute,
+  importRoute,
   usersRoute,
   rolesRoute,
   activityRoute,

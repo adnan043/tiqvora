@@ -13,7 +13,7 @@
  * (performance.md "Scripts with the ClientRouter"); the portal has no router, so
  * it is a full load. Only links to PRERENDERED pages carry `data-astro-prefetch` (fetched on hover;
  * the header nav as soon as it is on screen). Pages rendered per visit
- * (`/jobs/<slug>/`, `/dashboard`) answer `no-store`: a prefetch of them is thrown away.
+ * (`/help/articles/<slug>/`, `/dashboard`) answer `no-store`: a prefetch of them is thrown away.
  *
  * Structured data (JSON-LD, src/lib/seo.ts): the home page gets `WebSite` +
  * `Organization`; a page passes its own in `jsonLd` (a post, a job).
@@ -51,7 +51,7 @@ interface Props {
    * a renamed site (`/site-api/site`) after load.
    */
   isStatic?: boolean;
-  /** A list page's JSON route (`/site-api/jobs`): the browser starts fetching it with the page, not after it. */
+  /** A list page's JSON route (`/site-api/kb/search`): the browser starts fetching it with the page, not after it. */
   preloadData?: string;
   /** Keep the page out of search results (account pages, private pages). */
   noindex?: boolean;

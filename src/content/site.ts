@@ -9,7 +9,7 @@
 /** Search and social basics. The NAME comes from the platform (above). */
 export const SITE = {
   /** One sentence: the meta description of pages that have none of their own. Use `{name}`. */
-  description: 'News, guides, open roles and your own dashboard at {name}.',
+  description: 'Answers, guides and help from the {name} team: search the help center, ask the assistant or reach a person.',
   /** `en`, `fr`, … : the page language (screen readers, search engines). */
   lang: 'en',
   /**
@@ -33,102 +33,79 @@ export interface NavItem {
 }
 
 /**
- * Top navigation. Every href is a page of THIS site (`/`, `/blog/`, `/jobs/`,
+ * Top navigation. Every href is a page of THIS site (`/`, `/help/`, `/blog/`,
  * `/about/`, `/dashboard`, `/account/…`): plain links.
  */
 export const NAV: NavItem[] = [
   {label: 'Home', href: '/'},
+  // The help center's home is rendered on every visit (SSR): no prefetch.
+  {label: 'Help', href: '/help/', prefetch: false},
   {label: 'Blog', href: '/blog/'},
-  {label: 'Jobs', href: '/jobs/'},
   {label: 'About', href: '/about/'},
 ];
 
 /**
  * The home page, top to bottom (`src/pages/index.astro`). Each block is one
- * section; reorder or drop freely. Rewrite every word for the business: what it
- * offers, who it is for, what a visitor does next. No invented reviews or numbers.
+ * section; reorder or drop freely. Rewrite every word for the business. Use
+ * `{name}` for the site name. No invented reviews or numbers.
+ *
+ * The categories and popular articles are NOT here: the help center's own
+ * content (`/site-api/kb/home`) fills them in the browser.
  */
 export const HOME = {
   hero: {
-    eyebrow: 'Welcome to {name}',
-    /** The headline. `highlight` is the part of it shown with a marker behind it (or '' for none). */
-    title: 'Everything you need, in one place',
-    highlight: 'one place',
-    body: 'Create your account in a minute, then keep your work, your files and your updates together in your own dashboard.',
-    note: 'Sign up with your email. No setup needed.',
-    /** Guests: create an account, or jump down the page. */
-    guest: {primary: 'Create an account', secondary: 'See how it works'},
-    /** Signed-in visitors. */
-    user: {primary: 'Open your dashboard', secondary: 'Read the blog'},
+    eyebrow: '{name} help center',
+    title: 'Get answers fast',
+    body: 'Search our guides, ask the assistant, or reach a person on the team.',
+    /** The search box: a visible label, an example, the button. */
+    label: 'Search the help center',
+    placeholder: 'For example: change my password',
+    button: 'Search',
+    /** Shown under the box when the search is too short (the server ignores under 2 characters). */
+    tooShort: 'Type at least 2 characters to search.',
+    /** The row of category links under the box (filled from the help center). */
+    topics: 'Popular topics:',
+    browse: 'Browse the help center',
   },
-  /** The dashboard picture next to the headline: illustrative only, hidden from screen readers. */
-  visual: {
-    nav: ['Overview', 'Projects', 'Files', 'Messages', 'Settings'],
-    title: 'Overview',
-    stats: [
-      {label: 'Open tasks', value: '12', trend: '+3 this week'},
-      {label: 'Files', value: '48', trend: '+6 this week'},
-      {label: 'Messages', value: '5', trend: '2 unread'},
-    ],
-    chart: 'Activity, last 30 days',
-    rows: [
-      {name: 'Welcome checklist', status: 'Done', tone: 'success'},
-      {name: 'Monthly report', status: 'In progress', tone: 'info'},
-      {name: 'Team photo', status: 'Waiting', tone: 'warning'},
-    ],
-  },
-  features: {
-    eyebrow: 'What you get',
-    title: 'Built for the way you work',
-    body: 'The essentials, ready from the first day, and nothing you have to learn first.',
-    /** `icon`: one of the names in `src/components/home/Icon.astro`. */
-    items: [
-      {icon: 'user', title: 'Your own account', body: 'Sign up with your email and pick up where you left off, on any device.'},
-      {icon: 'dashboard', title: 'A clear dashboard', body: 'Your work, your files and your latest updates together on one screen.'},
-      {icon: 'bell', title: 'Updates that matter', body: 'Hear about what needs you, when it needs you, and nothing else.'},
-      {icon: 'shield', title: 'Private and secure', body: 'Secure sign-in and a private space that only you can open.'},
-      {icon: 'book', title: 'Practical guides', body: 'Stories and how-tos on the blog, written by the team.'},
-      {icon: 'briefcase', title: 'Open roles', body: 'See who is hiring on the job board, updated as new roles open.'},
-    ],
-  },
+  popular: {title: 'Popular articles', link: 'All topics'},
   how: {
     eyebrow: 'How it works',
-    title: 'Up and running in three steps',
+    title: 'Help in three steps',
+    /** `icon`: one of the names in `src/components/home/Icon.astro`. */
     steps: [
-      {title: 'Create your account', body: 'Enter your email and choose a password. It takes about a minute.'},
-      {title: 'Make it yours', body: 'Add your details and choose what you want to see first.'},
-      {title: 'Open your dashboard', body: 'Everything is there when you come back, on your phone or your computer.'},
+      {icon: 'search', title: 'Search the help center', body: 'Type your question in a few words. Most answers are one search away.'},
+      {icon: 'message', title: 'Ask the assistant', body: 'Ask in your own words. It answers from our articles and shows where each answer comes from.'},
+      {icon: 'headset', title: 'Talk to a person', body: 'Still stuck? Ask for a person and someone from the team picks it up.'},
     ],
   },
   blog: {title: 'Latest from the blog', link: 'All posts'},
-  jobs: {title: 'Open roles', link: 'All jobs', remote: 'Remote'},
   faq: {
     eyebrow: 'Questions',
-    title: 'Questions, answered',
+    title: 'About getting help',
     items: [
       {
-        q: 'How do I create an account?',
-        a: 'Choose Create an account at the top of any page, enter your email and pick a password. You can start right away.',
+        q: 'Where do the answers come from?',
+        a: 'From the articles in our help center, written and kept up to date by our team.',
       },
       {
-        q: 'Can I use it on my phone?',
-        a: 'Yes. Every page works on phones, tablets and computers, and your dashboard is the same wherever you sign in.',
+        q: 'Can I trust the assistant?',
+        a: 'It answers only from our help center and lists the articles it used, so you can check. It can be wrong: when it is not sure, it says so and offers you a person.',
       },
       {
-        q: 'Who can see my information?',
-        a: 'Only you, once you are signed in. You can update your details from your dashboard at any time.',
+        q: 'Can I talk to a person?',
+        a: 'Yes. If the articles and the assistant do not solve it, ask for a person and someone from the team takes it from there.',
       },
       {
-        q: 'I forgot my password. What now?',
-        a: 'Choose Sign in, then Forgot your password. We email you a link to set a new one.',
+        q: 'Do I need an account?',
+        a: 'No. The help center is open to everyone, with no sign-in needed.',
       },
     ],
   },
   cta: {
-    title: 'Ready to get started with {name}?',
-    body: 'Create your account in a minute and open your dashboard.',
-    primary: 'Create an account',
-    secondary: 'Sign in',
+    title: 'Still looking for something?',
+    body: 'Every topic and article is in the help center, open around the clock.',
+    primary: 'Browse the help center',
+    secondary: 'Read the blog',
   },
 };
 
@@ -142,11 +119,11 @@ export const ABOUT = {
     },
     {
       heading: 'What you will find here',
-      body: 'A blog with practical guides, open roles, and a dashboard for everyone with an account.',
+      body: 'A help center with answers to common questions, an assistant that answers from it, a person when you need one, and a blog with practical guides.',
     },
     {
-      heading: 'How to take part',
-      body: 'Create an account and open your dashboard. Everyone is welcome.',
+      heading: 'How to get help',
+      body: 'Search the help center or read the blog. Everyone is welcome.',
     },
   ],
 };

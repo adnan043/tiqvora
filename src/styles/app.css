@@ -3061,3 +3061,244 @@
   height: var(--control);
   padding-block: 0;
 }
+
+/* ------------------------------------------------- knowledge base: categories -- */
+
+.screen-categories .categories-name {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  min-width: 0;
+}
+
+.screen-categories .categories-icon {
+  display: grid;
+  flex: none;
+  place-items: center;
+  width: 32px;
+  height: 32px;
+  border-radius: var(--radius-sm);
+  background: var(--accent-soft);
+  color: var(--accent-text);
+}
+
+.screen-categories .categories-text {
+  min-width: 0;
+}
+
+.screen-categories .categories-description {
+  display: -webkit-box;
+  max-width: 48ch;
+  overflow: hidden;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  color: var(--muted);
+}
+
+.screen-categories .categories-icon-pick {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.screen-categories .categories-icon-pick .select {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+/* --------------------------------------------------- knowledge base: snippets -- */
+
+.screen-snippets .snippets-search {
+  flex: 1 1 320px;
+  max-width: 420px;
+}
+
+.screen-snippets .snippets-search .search-input {
+  min-width: 0;
+}
+
+.screen-snippets .snippets-text {
+  min-width: 0;
+  max-width: 72ch;
+}
+
+.screen-snippets .snippets-answer {
+  display: -webkit-box;
+  overflow: hidden;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+}
+
+.screen-snippets .snippets-answer-field {
+  display: grid;
+  gap: var(--space-1);
+}
+
+.screen-snippets .snippets-count {
+  margin: 0;
+  justify-self: end;
+  color: var(--subtle);
+  font-size: var(--text-xs);
+  line-height: var(--leading-xs);
+  font-variant-numeric: tabular-nums;
+}
+
+.screen-snippets .snippets-count[data-near] {
+  color: var(--warning);
+  font-weight: var(--weight-medium);
+}
+
+/* ----------------------------------------------------- knowledge base: import -- */
+
+.screen-import .import-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--space-6);
+  align-items: start;
+}
+
+.screen-import .import-found {
+  margin: 0;
+  color: var(--muted);
+  font-size: var(--text-sm);
+  line-height: var(--leading-sm);
+}
+
+.screen-import .import-found strong {
+  color: var(--ink);
+  font-weight: var(--weight-semibold);
+}
+
+.screen-import .import-preview {
+  overflow: hidden;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+}
+
+.screen-import .import-row {
+  min-width: 0;
+}
+
+.screen-import .import-clamp {
+  display: -webkit-box;
+  overflow: hidden;
+  overflow-wrap: anywhere;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+}
+
+.screen-import .import-problem {
+  color: var(--danger);
+  font-size: var(--text-sm);
+  line-height: var(--leading-sm);
+}
+
+.screen-import .import-progress {
+  display: grid;
+  gap: var(--space-3);
+}
+
+.screen-import .import-skipped {
+  display: grid;
+  gap: var(--space-2);
+}
+
+.screen-import .import-skipped h4 {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  margin: 0;
+  font-size: var(--text-md);
+  line-height: var(--leading-md);
+  font-weight: var(--weight-semibold);
+}
+
+.screen-import input[type='file'] {
+  min-height: var(--control);
+}
+
+@media (max-width: 1024px) {
+  .screen-import .import-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+@media (max-width: 640px) {
+  .screen-import .import-grid {
+    gap: var(--space-4);
+  }
+
+  .screen-snippets .snippets-search {
+    flex-basis: 100%;
+    max-width: none;
+  }
+}
+
+/* ArticleEditor: the textarea stays mounted on the Preview tab (visually hidden, focusable);
+   it must not keep its full size there, or the drawer overflows. */
+.article-editor {
+  position: relative;
+}
+
+.article-editor textarea.article-editor-input.visually-hidden {
+  width: 1px;
+  height: 1px;
+  min-height: 0;
+  padding: 0;
+  border: 0;
+}
+
+/* Row menus read from the left like every list, whatever the cell's alignment. */
+.menu {
+  text-align: start;
+  justify-items: stretch;
+}
+
+.menu-item {
+  width: 100%;
+  justify-content: flex-start;
+}
+
+/* Phones: a row with two actions (edit + menu) keeps its title clear of both. */
+@media (max-width: 640px) {
+  .data-table tr:has(td.cell-actions > :nth-child(2)) td:first-child {
+    padding-inline-end: calc(var(--space-12) + var(--space-10));
+  }
+}
+
+/* The file picker looks like the kit's secondary button, in both themes. */
+.screen-import input[type='file'] {
+  max-width: 100%;
+  color: var(--muted);
+  font: inherit;
+  font-size: var(--text-sm);
+  line-height: var(--leading-sm);
+}
+
+.screen-import input[type='file']::file-selector-button {
+  min-height: var(--control);
+  margin-inline-end: var(--space-3);
+  padding: 0 var(--space-4);
+  border: 1px solid var(--secondary-border);
+  border-radius: var(--radius-sm);
+  background: var(--secondary-bg);
+  color: var(--secondary-ink);
+  font: inherit;
+  font-size: var(--text-md);
+  font-weight: var(--weight-semibold);
+  cursor: pointer;
+}
+
+.screen-import input[type='file']::file-selector-button:hover {
+  background: var(--hover);
+}
+
+.article-editor-preview h2 {
+  font-size: var(--text-xl);
+  line-height: var(--leading-xl);
+}
+
+.article-editor-preview h3 {
+  font-size: var(--text-lg);
+  line-height: var(--leading-lg);
+}

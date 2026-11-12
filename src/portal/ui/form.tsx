@@ -120,7 +120,8 @@ type Errors<V extends Values> = Partial<Record<keyof V, string>>;
  *   updates on every keystroke, so it disappears the moment the value is right.
  * - `submit(onValid)` validates everything, shows every error, focuses the
  *   first wrong field, and only then calls `onValid`.
- * - `setServerErrors` puts the server's answer on the fields it names.
+ * - `setServerErrors` puts the server's answer on the fields it names and
+ *   focuses the first of them.
  */
 export function useForm<V extends Values>(initial: V, schema: Schema<V>) {
   const [values, setValues] = useState<V>(initial);
@@ -189,7 +190,13 @@ export function useForm<V extends Values>(initial: V, schema: Schema<V>) {
     error: errorOf,
     submit,
     reset,
-    setServerErrors: (errors: Errors<V>) => setServer(errors),
+    /** Puts the server's errors on their fields and focuses the first one named. */
+    setServerErrors: (errors: Errors<V>) => {
+      setServer(errors);
+      // `refs` holds the fields in the order they were first rendered: the form's order.
+      const first = (Object.keys(refs.current) as (keyof V)[]).find(name => errors[name] && refs.current[name]);
+      if (first) refs.current[first]?.focus();
+    },
   };
 }
 

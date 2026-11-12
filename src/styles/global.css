@@ -1424,60 +1424,6 @@ hr {
   flex: 1 1 140px;
 }
 
-.check {
-  display: inline-flex;
-  align-items: center;
-  gap: var(--space-1);
-  font-weight: var(--weight-medium);
-}
-
-.job-list {
-  list-style: none;
-  padding: 0;
-  margin: 0;
-  display: grid;
-  gap: var(--space-2);
-}
-
-.job-row {
-  display: flex;
-  flex-wrap: wrap;
-  justify-content: space-between;
-  align-items: center;
-  gap: var(--space-3);
-  padding: var(--space-4) var(--space-5);
-  border: 1px solid var(--line);
-  border-radius: var(--radius);
-  background: var(--card);
-  text-decoration: none;
-  color: inherit;
-  transition:
-    border-color 0.15s ease,
-    box-shadow 0.2s ease;
-}
-
-.job-row:hover {
-  border-color: var(--line-strong);
-  box-shadow: var(--shadow-sm);
-}
-
-.job-row .job-title {
-  margin: 0 0 var(--space-1);
-  font-size: var(--text-lg);
-  line-height: var(--leading-lg);
-}
-
-.job-row p {
-  margin: 0;
-}
-
-.job-tags {
-  display: flex;
-  flex-wrap: wrap;
-  gap: var(--space-2);
-  align-items: center;
-}
-
 /* ---------------------------------------------------------------- home -- */
 
 .quote {
@@ -2004,4 +1950,31 @@ hr {
   .list-skeleton-row span {
     animation: none;
   }
+}
+
+/* Phones: header links and small header buttons are full tap targets (40px). */
+@media (max-width: 640px) {
+  .site-nav a,
+  .site-header .button.button-sm,
+  .site-header .button.small-button {
+    min-height: var(--control);
+  }
+}
+
+/* The 404 page (components/NotFound.astro): a way back into the help center. */
+.not-found-code {
+  margin-top: var(--space-4);
+}
+
+.not-found-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: var(--space-3);
+}
+
+.not-found-search {
+  max-width: 28rem;
+  margin: var(--space-6) auto 0;
+  text-align: left;
 }

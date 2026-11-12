@@ -1,0 +1,140 @@
+---
+/**
+ * One help-center topic, `/help/<category>/`: its head and ALL its published articles (a short
+ * list, at most 100, so it is server-rendered whole and ranks), from ONE in-process read,
+ * `GET /site-api/kb/categories/:slug` (Site Cache, cleared on every knowledge-base write).
+ *
+ * It reads NO visitor (brand only; `<Base isStatic>` fills the header in the browser), so a found
+ * topic may be kept a few minutes. An unknown topic answers a real 404, a database outage a 503
+ * (never a "does not exist" search engines would drop); neither is cached.
+ *
+ * `/help/search/` and `/help/articles/…` are their own pages and win over this one.
+ */
+import '../../../styles/help.css';
+
+import NotFound from '../../../components/NotFound.astro';
+import Base from '../../../layouts/Base.astro';
+import type {KbCategoryPage} from '../../../lib/kb-types';
+import {KB_LIMITS, SLUG_RE} from '../../../lib/kb-types';
+import {Icon, ICON_NAMES, type IconName} from '../../../portal/ui/icon';
+import {backend, read} from '../../../server/backend';
+import {staticContext} from '../../../server/page';
+
+export const prerender = false;
+
+const slug = Astro.params.category ?? '';
+// A slug that can't exist is a 404 without asking the database.
+const valid = SLUG_RE.test(slug) && slug.length <= KB_LIMITS.categorySlug;
+const [{site, viewer}, answer] = await Promise.all([
+  staticContext(Astro.request),
+  valid
+    ? backend(Astro.request)
+        .kb.categories[':slug'].$get({param: {slug}})
+        .catch(() => null)
+    : Promise.resolve(null),
+]);
+const page = answer?.ok ? await read<KbCategoryPage>(Promise.resolve(answer)) : null;
+const missing = !page && (!valid || answer?.status === 404);
+if (page) {
+  Astro.response.headers.set('Cache-Control', 'public, max-age=300');
+} else {
+  Astro.response.status = missing ? 404 : 503;
+  Astro.response.headers.set('Cache-Control', 'no-store');
+  if (!missing) Astro.response.headers.set('Retry-After', '60');
+}
+
+const iconOf = (name: string): IconName => ((ICON_NAMES as string[]).includes(name) ? (name as IconName) : 'file');
+const count = page?.articles.length ?? 0;
+---
+
+{
+  page ? (
+    <Base
+      site={site}
+      viewer={viewer}
+      isStatic
+      title={`${page.category.name} · Help center`}
+      description={page.category.description || `Help articles about ${page.category.name}.`}>
+      <main id="main" tabindex="-1" class="help wrap">
+        <nav class="help-breadcrumb" aria-label="Breadcrumb">
+          <ol>
+            <li>
+              <a href="/help/">Help center</a>
+            </li>
+            <li aria-current="page">{page.category.name}</li>
+          </ol>
+        </nav>
+
+        <header class="help-topic-head">
+          <span class="help-tile help-tile-lg">
+            <Icon name={iconOf(page.category.icon)} size={24} />
+          </span>
+          <div>
+            <h1>{page.category.name}</h1>
+            {page.category.description && <p class="lede">{page.category.description}</p>}
+            <span class="help-category-count">
+              {count} {count === 1 ? 'article' : 'articles'}
+            </span>
+          </div>
+        </header>
+
+        {count > 0 ? (
+          <ul class="help-list">
+            {page.articles.map(article => (
+              <li>
+                <a class="help-row" href={`/help/articles/${encodeURIComponent(article.slug)}/`}>
+                  <span class="help-row-text">
+                    <span class="help-row-title">{article.title}</span>
+                    {article.excerpt && <span class="help-row-snippet">{article.excerpt}</span>}
+                  </span>
+                  <Icon name="chevron-right" size={18} />
+                </a>
+              </li>
+            ))}
+          </ul>
+        ) : (
+          <div class="help-empty">
+            <strong>No articles here yet</strong>
+            <p>Try a search, or browse the other topics.</p>
+            <a class="button button-secondary" href="/help/">
+              All topics
+            </a>
+          </div>
+        )}
+
+        <section class="help-more" aria-labelledby="help-more-title">
+          <h2 id="help-more-title">Didn’t find what you need?</h2>
+          <form class="help-search" action="/help/search/" method="get" role="search" novalidate>
+            <label class="help-search-label" for="help-topic-q">
+              Search every article
+            </label>
+            <div class="help-search-box">
+              <Icon name="search" size={20} />
+              <input id="help-topic-q" type="search" name="q" maxlength="120" autocomplete="off" enterkeyhint="search" placeholder="e.g. cancel my subscription" />
+              <button class="button" type="submit">
+                Search
+              </button>
+            </div>
+          </form>
+        </section>
+      </main>
+    </Base>
+  ) : missing ? (
+    <Base site={site} viewer={viewer} isStatic title="Page not found" noindex>
+      <NotFound site={site} />
+    </Base>
+  ) : (
+    <Base site={site} viewer={viewer} isStatic title="Not available right now" noindex>
+      <main id="main" tabindex="-1" class="wrap narrow section center">
+        <p class="eyebrow">Help center</p>
+        <h1>This topic is not available right now</h1>
+        <p class="lede">Something went wrong on our side. Try again in a minute.</p>
+        <p>
+          <a class="button" href="/help/">
+            Help center
+          </a>
+        </p>
+      </main>
+    </Base>
+  )
+}
