@@ -94,6 +94,9 @@ const back = encodeURIComponent(path.startsWith('/account') ? '/dashboard' : `${
 const hydrate = isStatic || (config.preview && viewer.state !== 'user');
 // The home page tells search engines the site's name; other pages bring their own.
 const indexable = !noindex && !secretInUrl;
+// The help-desk chat (src/lib/helpdesk-widget.ts) on public pages only: never on sign-in,
+// the dashboard (and its old `/portal` address) or checkout.
+const chatWidget = !/^\/(account|dashboard|portal|checkout)(\/|$)/.test(path);
 const structured = indexable
   ? [...(path === '/' ? [siteJsonLd({name, logo: site?.logo}, description, SITE.lang)] : []), ...(jsonLd ? [jsonLd] : [])]
   : [];
@@ -232,6 +235,9 @@ const structured = indexable
       </div>
     </footer>
 
+    {/* Kept across client navigations (`transition:persist`): one chat panel stays open from page to page. */}
+    {chatWidget && <aside class="hd-root" aria-label="Help chat" data-hd-root transition:persist="hd-widget" />}
+
     <script>
       import {logout, refreshSession} from '../platform/browser';
       import {hydrateStaticPage} from '../platform/static-page';
@@ -278,9 +284,27 @@ const structured = indexable
         document.querySelectorAll<HTMLButtonElement>('[data-logout]').forEach(button =>
           button.addEventListener('click', () => {
             busy(button, 'Signing out…');
+            // The help chat's transcript belongs to this visitor: it never outlives the session.
+            try {
+              sessionStorage.removeItem('hd:transcript');
+            } catch {
+              // Storage blocked: nothing was kept.
+            }
             void logout();
           })
         );
+
+        // The help-desk chat: its code loads only on pages with the mount (public pages),
+        // once the browser is idle so it never competes with the first paint.
+        const chat = document.querySelector<HTMLElement>('[data-hd-root]');
+        if (chat && !chat.dataset.hdBound) {
+          const load = () => {
+            if (!chat.isConnected || chat.dataset.hdBound) return;
+            void import('../lib/helpdesk-widget').then(m => m.mountHelpdeskWidget(chat)).catch(() => null);
+          };
+          if ('requestIdleCallback' in window) requestIdleCallback(load, {timeout: 3000});
+          else setTimeout(load, 1);
+        }
       });
 
       // Once for the document (it stays across navigations):

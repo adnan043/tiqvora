@@ -1,5 +1,6 @@
 import {Hono} from 'hono';
 import {bodyLimit} from 'hono/body-limit';
+import {HTTPException} from 'hono/http-exception';
 
 import {isPreview} from '../platform/api';
 import {adminRoutes, authRoutes, getAccess, getViewer} from '../platform/auth';
@@ -9,6 +10,8 @@ import {syncPermissions} from '../platform/permission-sync';
 import {authSettings} from './auth-settings';
 import {checkoutRoutes, membershipRoutes} from './routes/checkout';
 import {abilitiesFor, CATALOGUE} from './permissions';
+import {helpdeskRoutes} from './routes/helpdesk';
+import {helpdeskSettingsRoutes} from './routes/helpdesk-settings';
 import {kbRoutes} from './routes/kb';
 import {kbManageRoutes} from './routes/kb-manage';
 import {siteRoutes} from './routes/site';
@@ -28,6 +31,8 @@ import {siteRoutes} from './routes/site';
  *   GET  /site          the site's brand                        routes/site.ts
  *   *    /kb/manage/... the knowledge base, for its editors     routes/kb-manage.ts
  *   *    /kb/...        the public help center's data           routes/kb.ts
+ *   *    /helpdesk/settings the assistant's settings (its managers) routes/helpdesk-settings.ts
+ *   *    /helpdesk/...  the chat assistant: ask, helpful, widget routes/helpdesk.ts
  *   *    /checkout/...  start and confirm a payment             routes/checkout.ts
  *   *    /memberships/... the member's memberships               routes/checkout.ts
  *
@@ -77,10 +82,18 @@ export const app = new Hono()
   // `/kb/manage` BEFORE `/kb`, so no manage path is read as a public one.
   .route('/kb/manage', kbManageRoutes)
   .route('/kb', kbRoutes)
+  // `/helpdesk/settings` BEFORE `/helpdesk`, so no settings path is read as a public one.
+  .route('/helpdesk/settings', helpdeskSettingsRoutes)
+  .route('/helpdesk', helpdeskRoutes)
   .route('/memberships', membershipRoutes)
 
   .notFound(c => c.json(problem('not_found', 'No such Site API route.'), 404))
   .onError((err, c) => {
+    // A request Hono itself could not read (malformed JSON in a validator): its own 4xx status.
+    if (err instanceof HTTPException && err.status >= 400 && err.status < 500) {
+      c.header('Cache-Control', 'no-store');
+      return c.json(problem('bad_request', 'That request could not be read.'), err.status);
+    }
     // The message only: an error object can carry request details.
     console.error(`site-api ${c.req.method} ${c.req.path}: ${err.message}`);
     return c.json(problem('internal_error', 'Something went wrong.'), 500);

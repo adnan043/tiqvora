@@ -1485,10 +1485,19 @@ hr {
   outline-offset: 2px;
 }
 
-.button:disabled,
+/* Disabled reads as disabled in both themes (a fill, not just transparency). A pending
+   button is disabled too, but keeps its variant's colours while it works. */
+.button:disabled:not([aria-busy='true']),
 .button[aria-disabled='true'] {
-  opacity: 0.55;
+  background: var(--hover);
+  border-color: var(--line);
+  color: var(--subtle);
   cursor: not-allowed;
+  box-shadow: none;
+}
+
+.button:disabled[aria-busy='true'] {
+  opacity: 0.85;
   box-shadow: none;
 }
 
@@ -1977,4 +1986,380 @@ hr {
   max-width: 28rem;
   margin: var(--space-6) auto 0;
   text-align: left;
+}
+
+/* ---------------------------------------------------------- chat widget -- */
+/* The help-desk chat on public pages (src/lib/helpdesk-widget.ts, mounted by
+   layouts/Base.astro). A launcher bottom-right; the panel is a 400px right side
+   sheet above 1024px and full screen (modal) at 1024px and below. AI answers are
+   plain text, the customer's messages a soft bubble (docs/design-system.md "AI
+   answer"); spacing matches the dashboard's .chat-thread. */
+
+/* Screen-reader-only text (the widget's announcements, the dashboard's captions). */
+.visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+
+.hd-root {
+  position: fixed;
+  inset: auto var(--gutter) var(--gutter) auto;
+  z-index: 60;
+}
+
+.hd-root.hd-open {
+  inset: 0 0 0 auto;
+}
+
+/* The full-screen panel is modal: the page behind does not scroll. */
+html.hd-lock,
+html.hd-lock body {
+  overflow: hidden;
+}
+
+.hd-launcher.button {
+  min-height: var(--control);
+  border-radius: var(--radius-pill);
+  box-shadow: var(--shadow-lg);
+}
+
+.hd-launcher[hidden] {
+  display: none;
+}
+
+.hd-icon {
+  width: 1.25em;
+  height: 1.25em;
+  flex: none;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 2;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.hd-panel {
+  display: flex;
+  flex-direction: column;
+  width: min(400px, 100vw);
+  height: 100vh;
+  height: 100dvh;
+  background: var(--card);
+  color: var(--ink);
+  border-left: 1px solid var(--line);
+  border-radius: var(--radius) 0 0 var(--radius);
+  box-shadow: var(--shadow-lg);
+  font-size: var(--text-md);
+  line-height: var(--leading-md);
+}
+
+.hd-panel[hidden] {
+  display: none;
+}
+
+.hd-head {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-3) var(--space-3) var(--space-3) var(--space-5);
+  border-bottom: 1px solid var(--line);
+}
+
+.hd-title {
+  flex: 1;
+  min-width: 0;
+  margin: 0;
+  font-size: var(--text-lg);
+  line-height: var(--leading-lg);
+  font-weight: var(--weight-semibold);
+  letter-spacing: normal;
+  overflow-wrap: anywhere;
+}
+
+.hd-close.button {
+  width: var(--control);
+  padding: 0;
+}
+
+/* Between messages --space-3; between turns of different senders --space-5. */
+.hd-log {
+  flex: 1;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  padding: var(--space-5);
+}
+
+.hd-msg-customer + .hd-msg:not(.hd-msg-customer),
+.hd-msg-ai + .hd-msg-customer {
+  margin-top: var(--space-2);
+}
+
+.hd-log:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+}
+
+.hd-msg {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: var(--space-3);
+  max-width: 100%;
+}
+
+.hd-msg p {
+  margin: 0;
+}
+
+.hd-msg-customer {
+  align-items: flex-end;
+}
+
+/* The customer: a soft bubble (as .chat-message-customer .chat-message-body). */
+.hd-bubble {
+  max-width: 85%;
+  padding: var(--space-3) var(--space-4);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--surface);
+  color: var(--ink);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+/* The AI: plain text, no bubble. */
+.hd-answer {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.hd-sources {
+  width: 100%;
+  font-size: var(--text-sm);
+  line-height: var(--leading-sm);
+}
+
+.hd-sources-title {
+  color: var(--muted);
+  font-weight: var(--weight-semibold);
+}
+
+.hd-sources ol {
+  margin: 0;
+  padding-left: var(--space-5);
+}
+
+/* Each link is a full control-height tap target. */
+.hd-sources a {
+  display: inline-flex;
+  align-items: center;
+  min-height: var(--control);
+  color: var(--accent-text);
+  overflow-wrap: anywhere;
+}
+
+.hd-note,
+.hd-muted {
+  color: var(--muted);
+  font-size: var(--text-sm);
+  line-height: var(--leading-sm);
+}
+
+.hd-helpful {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.hd-helpful .hd-tap {
+  min-height: var(--control);
+}
+
+.hd-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+}
+
+.hd-chip {
+  min-height: var(--control);
+  padding: var(--space-1) var(--space-4);
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius-pill);
+  background: var(--card);
+  color: var(--ink);
+  font: inherit;
+  font-size: var(--text-sm);
+  line-height: var(--leading-sm);
+  text-align: left;
+  cursor: pointer;
+}
+
+.hd-chip:hover {
+  background: var(--hover);
+}
+
+.hd-chip:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.hd-chip:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+.hd-dots {
+  display: inline-flex;
+  gap: var(--space-1);
+  padding: var(--space-2) 0;
+}
+
+.hd-dots span {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--subtle);
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .hd-dots span {
+    animation: hd-blink 1.2s ease-in-out infinite;
+  }
+
+  .hd-dots span:nth-child(2) {
+    animation-delay: 0.2s;
+  }
+
+  .hd-dots span:nth-child(3) {
+    animation-delay: 0.4s;
+  }
+}
+
+@keyframes hd-blink {
+  0%,
+  80%,
+  100% {
+    opacity: 0.3;
+  }
+  40% {
+    opacity: 1;
+  }
+}
+
+.hd-composer {
+  display: grid;
+  gap: var(--space-2);
+  padding: var(--space-3) var(--space-5) var(--space-4);
+  border-top: 1px solid var(--line);
+}
+
+.hd-label {
+  color: var(--muted);
+  font-size: var(--text-sm);
+  line-height: var(--leading-sm);
+  font-weight: var(--weight-medium);
+}
+
+.hd-row {
+  display: flex;
+  align-items: flex-end;
+  gap: var(--space-2);
+}
+
+/* Exactly --control tall when empty (24px line + 2 × 8px): the outline is an inset
+   shadow, not a border, so it adds no height. The script sets the height as it grows. */
+.hd-input {
+  flex: 1;
+  min-width: 0;
+  min-height: var(--control);
+  max-height: calc(var(--leading-md) * 6 + var(--space-2) * 2);
+  padding: var(--space-2) var(--space-3);
+  border: 0;
+  border-radius: var(--radius-sm);
+  box-shadow: inset 0 0 0 1px var(--line-strong);
+  background: var(--card);
+  color: var(--ink);
+  font: inherit;
+  font-size: var(--text-md);
+  line-height: var(--leading-md);
+  resize: none;
+  overflow-y: auto;
+}
+
+.hd-input:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.hd-input[aria-invalid='true'] {
+  box-shadow: inset 0 0 0 1px var(--danger);
+}
+
+@media (forced-colors: active) {
+  .hd-input {
+    border: 1px solid CanvasText;
+  }
+}
+
+.hd-error,
+.hd-count {
+  margin: 0;
+}
+
+.hd-error {
+  color: var(--danger);
+  font-size: var(--text-sm);
+  line-height: var(--leading-sm);
+}
+
+/* Full screen at tablet width and below (a side sheet would cover most of the page). */
+@media (max-width: 1024px) {
+  .hd-panel {
+    width: 100vw;
+    border-left: 0;
+    border-radius: 0;
+  }
+}
+
+@media (max-width: 640px) {
+  .hd-launcher.button,
+  .hd-send.button,
+  .hd-head-person.button {
+    min-height: var(--control-lg);
+  }
+
+  .hd-head {
+    padding-left: var(--space-4);
+  }
+
+  .hd-log {
+    padding: var(--space-4);
+  }
+
+  .hd-composer {
+    padding: var(--space-3) var(--space-4);
+  }
+
+  /* 17px stops iOS zooming into the field; 12px padding makes it --control-lg, like Send. */
+  .hd-input {
+    min-height: var(--control-lg);
+    max-height: calc(var(--leading-md) * 6 + var(--space-3) * 2);
+    padding: var(--space-3);
+    font-size: var(--text-lg);
+  }
+}
+
+@media print {
+  .hd-root {
+    display: none;
+  }
 }

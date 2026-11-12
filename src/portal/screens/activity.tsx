@@ -152,6 +152,31 @@ function describe(event: AuditRow): Line {
         what: `imported ${Number(meta.articles ?? 0)} articles and ${Number(meta.snippets ?? 0)} snippets`,
         icon: 'database',
       };
+    // The help desk (src/server/routes/helpdesk-settings.ts): `meta.fields` names what changed.
+    case 'helpdesk_settings_updated': {
+      const words: Record<string, string> = {
+        assistantName: 'name',
+        greeting: 'greeting',
+        tone: 'tone',
+        confidenceThreshold: 'confidence',
+        provider: 'provider',
+        model: 'model',
+        monthlyCapCents: 'monthly cap',
+        launcherLabel: 'button label',
+        businessHours: 'business hours',
+        helpTitle: 'help title',
+        helpIntro: 'help intro',
+        quickReplies: 'quick replies',
+        humanTopics: 'human-only topics',
+      };
+      const fields = Array.isArray(meta.fields) ? meta.fields.filter((f): f is string => typeof f === 'string') : [];
+      return {
+        who,
+        what: 'changed the assistant’s settings',
+        icon: 'zap',
+        detail: fields.length ? `Changed: ${fields.map(f => words[f] ?? f).join(', ')}` : undefined,
+      };
+    }
     default:
       return {
         who,

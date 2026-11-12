@@ -1,5 +1,6 @@
 import {infiniteQueryOptions, queryOptions} from '@tanstack/react-query';
 
+import type {HelpdeskSettingsAdmin} from '../lib/helpdesk-types';
 import type {ArticleStatus, KbManageArticle, KbManageArticlesPage, KbManageCategory, KbSnippetsPage} from '../lib/kb-types';
 import type {AdminUser, AuditRow, PermissionRow, RoleRow} from '../lib/types';
 import {refreshSession} from '../platform/browser';
@@ -109,6 +110,14 @@ export const kbSnippetsQuery = (q: string) =>
     queryFn: ({pageParam}) => read<KbSnippetsPage>(api.kb.manage.snippets.$get({query: {q, before: pageParam ?? ''}})),
     getNextPageParam: last => (last.next ? String(last.next) : undefined),
   });
+
+// ---------------------------------------------------------------- help desk --
+
+/** `/dashboard/assistant`: the assistant's settings, whether its key is set, this month's spend. */
+export const helpdeskSettingsQuery = queryOptions({
+  queryKey: ['helpdesk', 'settings'],
+  queryFn: () => read<HelpdeskSettingsAdmin>(api.helpdesk.settings.$get()),
+});
 
 /** `/dashboard/activity`: the audit log, newest first. */
 export const auditQuery = infiniteQueryOptions({

@@ -20,6 +20,7 @@ import {
   firstAuditQuery,
   firstUsersQuery,
   healthQuery,
+  helpdeskSettingsQuery,
   KB_ALL_ARTICLES,
   KB_DRAFTS,
   kbArticlesQuery,
@@ -135,6 +136,10 @@ const NAV_GROUPS: {label: string; items: NavItem[]}[] = [
       {to: '/snippets', label: 'Snippets', icon: 'zap', ability: 'editKnowledge'},
       {to: '/import', label: 'Import', icon: 'database', ability: 'editKnowledge'},
     ],
+  },
+  {
+    label: 'Help desk',
+    items: [{to: '/assistant', label: 'Assistant', icon: 'zap', ability: 'manageHelpdesk'}],
   },
   {
     label: 'Manage',
@@ -350,6 +355,12 @@ function Shell() {
                     icon: 'log-out',
                     onSelect: () => {
                       setSigningOut(true);
+                      // The public chat keeps this tab's conversation; the next person on it mustn't see it.
+                      try {
+                        sessionStorage.removeItem('hd:transcript');
+                      } catch {
+                        // Storage blocked: nothing was kept.
+                      }
                       void logout();
                     },
                   },
@@ -434,6 +445,14 @@ const importRoute = createRoute({
   loader: ({context: {queryClient}}) => warm(queryClient.ensureQueryData(kbCategoriesQuery)),
   component: lazyRouteComponent(() => import('./screens/import'), 'Import'),
 });
+// The help desk (holders of `site:helpdesk:settings`; the routes' guards enforce it).
+const assistantRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: '/assistant',
+  staticData: {title: 'Assistant'},
+  loader: ({context: {queryClient}}) => warm(queryClient.ensureQueryData(helpdeskSettingsQuery)),
+  component: lazyRouteComponent(() => import('./screens/assistant'), 'Assistant'),
+});
 const usersRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: '/users',
@@ -477,6 +496,7 @@ export const routeTree = rootRoute.addChildren([
   categoriesRoute,
   snippetsRoute,
   importRoute,
+  assistantRoute,
   usersRoute,
   rolesRoute,
   activityRoute,

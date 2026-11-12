@@ -4,17 +4,29 @@ import type {KbSearchHit} from '../../lib/kb-types';
 /**
  * Full-text search over `kb_chunks` (published articles split by heading, plus snippets).
  *
- * The GIN index `kb_chunks_search_idx` (migration 20261112110356) is on EXACTLY this
- * expression; any query must use it as is (with the chunk table aliased `c`) to hit the index.
+ * The vector is STORED in `kb_chunks.search_vec` (migration 20261112121731): a trigger sets it
+ * to `setweight(to_tsvector('simple', heading), 'A') || setweight(to_tsvector('simple', text), 'B')`
+ * on every insert and on updates of heading/text, and the GIN index `kb_chunks_search_vec_idx`
+ * is on it. Matching and ranking read the column (no to_tsvector per row); the chunk table is
+ * aliased `c` in every query that uses this.
  */
-export const KB_SEARCH_VECTOR = Prisma.sql`(setweight(to_tsvector('simple', c."heading"), 'A') || setweight(to_tsvector('simple', c."text"), 'B'))`;
+export const KB_SEARCH_VECTOR = Prisma.sql`c."search_vec"`;
 
 const MAX_PREFIX_WORDS = 8;
 
+/** Words this long or longer match as prefixes; shorter ones ("uk", "eu", "tea") only exactly. */
+export const PREFIX_MIN_LENGTH = 4;
+
+/** A tsquery term for one word (letters/digits only): `word:*` from PREFIX_MIN_LENGTH up, else `word`. */
+export function tsTerm(word: string): string {
+  return word.length >= PREFIX_MIN_LENGTH ? `${word}:*` : word;
+}
+
 /**
  * The 'simple' configuration doesn't stem ("grinders" never matches "grinder"), so a search also
- * matches word prefixes: `prefixQuery('Burr grinders?')` → `'burr:* & grinders:*'`, or `null` when
- * no word of 2+ letters or digits is left. Only letters and digits survive, so the result is
+ * matches word prefixes: `prefixQuery('Burr grinders in the UK?')` → `'burr:* & grinders:* & in & the & uk'`,
+ * or `null` when no word of 2+ letters or digits is left. Words under PREFIX_MIN_LENGTH match
+ * exactly ("uk:*" would also match "ukulele"). Only letters and digits survive, so the result is
  * always valid `to_tsquery` syntax; it is still sent as a bound parameter, never SQL text.
  */
 export function prefixQuery(q: string): string | null {
@@ -26,7 +38,7 @@ export function prefixQuery(q: string): string | null {
         .filter(word => word.length >= 2)
     ),
   ].slice(0, MAX_PREFIX_WORDS);
-  return words.length ? words.map(word => `${word}:*`).join(' & ') : null;
+  return words.length ? words.map(tsTerm).join(' & ') : null;
 }
 
 /** The tsquery for a visitor's search: their words as typed (websearch syntax) OR as prefixes. */

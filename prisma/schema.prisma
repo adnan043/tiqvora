@@ -564,12 +564,18 @@ model KbChunk {
   position  Int        @default(0)
   heading   String     @default("") @db.VarChar(200)
   text      String     @db.VarChar(2000)
+  /// The full-text search vector, kept by the database: the BEFORE INSERT OR UPDATE OF
+  /// heading, text trigger `kb_chunks_search_vec_trg` (migration ..._kb_chunks_search_vec)
+  /// sets it to setweight(to_tsvector('simple', heading), 'A') || setweight(to_tsvector('simple', text), 'B').
+  /// Never written by app code; read only in raw SQL (`KB_SEARCH_VECTOR`, src/server/kb/search.ts).
+  searchVec Unsupported("tsvector")? @map("search_vec")
   createdAt DateTime   @default(now()) @map("created_at") @db.Timestamptz(3)
   article   KbArticle? @relation(fields: [articleId], references: [id], onDelete: Cascade)
   snippet   KbSnippet? @relation(fields: [snippetId], references: [id], onDelete: Cascade)
 
   @@index([articleId, position])
   @@index([snippetId])
+  @@index([searchVec], type: Gin)
   @@map("kb_chunks")
 }
 
@@ -587,4 +593,48 @@ model RateWindow {
 
   @@id([bucket, minute])
   @@map("rate_windows")
+}
+
+// ---------------------------------------------------------------------------
+// Help desk, Phase 2: the AI assistant.
+
+/// One question asked of the assistant (analytics, Knowledge Health). Anonymous on
+/// purpose: NO user id, NO IP, NO page beyond its path. Append-heavy: BigInt id.
+model QuestionLog {
+  id           BigInt   @id @default(autoincrement())
+  /// The customer's words, ≤ 500 (the validator's cap).
+  question     String   @db.VarChar(500)
+  /// A BCP 47 tag from the browser (`en`, `pt-BR`), or ''.
+  language     String   @default("") @db.VarChar(16)
+  /// The page the question was asked on: a path only, never a query string.
+  pagePath     String   @default("") @map("page_path") @db.VarChar(300)
+  /// The best matching article. No foreign key: the log outlives a deleted article.
+  topArticleId Int?     @map("top_article_id")
+  /// `high`, `medium`, `low` or `none` (CHECK).
+  confidence   String   @default("none") @db.VarChar(8)
+  /// `answered`, `no_source`, `handed_off` or `ai_off` (CHECK).
+  outcome      String   @db.VarChar(12)
+  /// The customer's thumbs up / down; null until they say.
+  helpful      Boolean?
+  model        String   @default("") @db.VarChar(60)
+  inputTokens  Int      @default(0) @map("input_tokens")
+  outputTokens Int      @default(0) @map("output_tokens")
+  costMicros   Int      @default(0) @map("cost_micros")
+  createdAt    DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+
+  /// The week's questions (Knowledge Health, reports), keyset by id.
+  @@index([createdAt, id])
+  @@map("question_logs")
+}
+
+/// AI spend per calendar month (UTC). One conditional update per call enforces the
+/// owner's monthly cap (src/server/ai/usage.ts): never read, check, then write.
+model AiUsage {
+  /// The first day of the month.
+  month       DateTime @id @db.Date
+  spentMicros BigInt   @default(0) @map("spent_micros")
+  requests    Int      @default(0)
+  updatedAt   DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  @@map("ai_usage")
 }

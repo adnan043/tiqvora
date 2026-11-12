@@ -14,7 +14,8 @@ DO $$
 BEGIN
   IF EXISTS (SELECT 1 FROM "kb_articles" WHERE "slug" NOT IN ('how-long-does-shipping-take', 'tracking-your-order', 'changing-or-cancelling-an-order', 'damaged-or-missing-items', 'international-shipping', 'how-coffee-subscriptions-work', 'pause-skip-or-change-delivery-date', 'change-coffee-or-grind-in-subscription', 'cancel-your-subscription', 'subscription-gift-options', 'pour-over-brewing-guide', 'french-press-brewing-guide', 'espresso-dial-in-basics', 'cold-brew-at-home', 'storing-coffee-beans-fresh', 'choosing-the-right-grind-size', 'cleaning-your-burr-grinder', 'grinder-not-grinding-troubleshooting', 'equipment-warranty', 'descaling-your-espresso-machine', 'update-payment-method', 'why-was-i-charged', 'refund-policy', 'reset-your-password', 'apply-a-discount-code', 'holiday-shipping-cutoffs', 'wholesale-accounts', 'loyalty-beans-program'))
      OR EXISTS (SELECT 1 FROM "kb_categories" WHERE "slug" NOT IN ('orders-shipping', 'subscriptions', 'brewing-guides', 'equipment-grinders', 'account-billing'))
-     OR EXISTS (SELECT 1 FROM "kb_snippets" WHERE "question" NOT IN ('What are your customer support hours?', 'Do you sell decaf coffee?', 'Are your coffee bags recyclable or compostable?', 'How do I read the roast date on the bag?', 'What is the minimum order for free shipping?', 'Do you sell gift cards?', 'How much caffeine is in a cup of your coffee?', 'Can I pick up my order from the roastery?', 'Which payment methods do you accept?', 'Is your coffee organic and fairly traded?')) THEN
+     OR EXISTS (SELECT 1 FROM "kb_snippets" WHERE "question" NOT IN ('What are your customer support hours?', 'Do you sell decaf coffee?', 'Are your coffee bags recyclable or compostable?', 'How do I read the roast date on the bag?', 'What is the minimum order for free shipping?', 'Do you sell gift cards?', 'How much caffeine is in a cup of your coffee?', 'Can I pick up my order from the roastery?', 'Which payment methods do you accept?', 'Is your coffee organic and fairly traded?'))
+     OR EXISTS (SELECT 1 FROM "question_logs" WHERE "question" NOT IN ('How do I change the grind in my subscription?', 'How long does shipping take to Canada?', 'Do you sell decaf pods?', 'My grinder stopped working, what should I check?', 'I want a refund for my last bag, it tasted stale', 'Can I skip next month’s delivery?', 'Do you offer barista training classes?', 'What ratio should I use for a French press?', 'My espresso machine leaks water from the bottom', '¿Cómo puedo rastrear mi pedido?', 'Can I book a cupping session at the roastery?', 'How do I update my card?', 'Can I talk to a real person?', 'Do you sell matcha or loose-leaf tea?', 'How do I make cold brew at home?')) THEN
     RAISE EXCEPTION 'prisma/seed.sql is sample data and this knowledge base is already in use. Nothing was changed.';
   END IF;
 END $$;
@@ -27,6 +28,7 @@ UPDATE "helpdesk_settings" SET
   "business_hours" = 'Mon–Fri, 9 am–5 pm Eastern',
   "help_title" = 'How can we help?',
   "help_intro" = 'Guides for your Northwind Coffee orders, subscriptions, brewing and equipment. Search, or ask our assistant.',
+  "model" = 'claude-opus-5-5',
   "updated_at" = now()
 WHERE "id" = 1;
 
@@ -1092,5 +1094,38 @@ INSERT INTO "helpdesk_human_topics" ("keyword", "updated_at") VALUES
   ('legal', now()),
   ('allergy', now())
 ON CONFLICT ("keyword") DO NOTHING;
+
+-- The assistant's question log, last 7 days. No user data: no user id, email or IP is ever logged.
+-- model '' with 0 tokens: answered without an AI call (no source, a hand-off topic, the assistant off).
+-- No unique key: WHERE NOT EXISTS on the question.
+INSERT INTO "question_logs" ("question", "language", "page_path", "top_article_id", "confidence", "outcome",
+  "helpful", "model", "input_tokens", "output_tokens", "cost_micros", "created_at")
+SELECT v."question", v."language", v."page_path", a."id", v."confidence", v."outcome",
+  v."helpful", v."model", v."input_tokens", v."output_tokens", v."cost_micros", now() - v."ago"::interval
+FROM (VALUES
+  ('How do I change the grind in my subscription?', 'en-US', '/help/', 'change-coffee-or-grind-in-subscription', 'high', 'answered', true, 'claude-opus-5-5', 2310, 164, 12520, '6 days 4 hours'),
+  ('How long does shipping take to Canada?', 'en-CA', '/help/articles/how-long-does-shipping-take/', 'international-shipping', 'high', 'answered', true, 'claude-opus-5-5', 2475, 142, 12740, '6 days 1 hour'),
+  ('Do you sell decaf pods?', 'en', '/', NULL, 'none', 'no_source', NULL::boolean, '', 0, 0, 0, '5 days 7 hours'),
+  ('My grinder stopped working, what should I check?', 'en-US', '/help/equipment-grinders/', 'grinder-not-grinding-troubleshooting', 'medium', 'answered', false, 'claude-opus-5-5', 2890, 201, 15580, '5 days 2 hours'),
+  ('I want a refund for my last bag, it tasted stale', 'en-US', '/help/articles/refund-policy/', 'refund-policy', 'none', 'handed_off', NULL::boolean, '', 0, 0, 0, '4 days 9 hours'),
+  ('Can I skip next month’s delivery?', 'en-GB', '/help/', 'pause-skip-or-change-delivery-date', 'high', 'answered', NULL::boolean, 'claude-opus-5-5', 2240, 118, 11320, '4 days 3 hours'),
+  ('Do you offer barista training classes?', 'en', '/about/', NULL, 'none', 'no_source', NULL::boolean, '', 0, 0, 0, '3 days 8 hours'),
+  ('What ratio should I use for a French press?', 'en-US', '/help/brewing-guides/', 'french-press-brewing-guide', 'high', 'answered', true, 'claude-opus-5-5', 2560, 133, 12900, '3 days 5 hours'),
+  ('My espresso machine leaks water from the bottom', 'en-US', '/help/articles/descaling-your-espresso-machine/', 'descaling-your-espresso-machine', 'low', 'handed_off', NULL::boolean, 'claude-opus-5-5', 2705, 96, 12740, '2 days 10 hours'),
+  ('¿Cómo puedo rastrear mi pedido?', 'es-MX', '/help/', 'tracking-your-order', 'high', 'answered', true, 'claude-opus-5-5', 2380, 156, 12640, '2 days 6 hours'),
+  ('Can I book a cupping session at the roastery?', 'en', '/', NULL, 'none', 'no_source', NULL::boolean, '', 0, 0, 0, '2 days 1 hour'),
+  ('How do I update my card?', 'en-US', '/help/account-billing/', 'update-payment-method', 'none', 'ai_off', NULL::boolean, '', 0, 0, 0, '1 day 9 hours'),
+  ('Can I talk to a real person?', 'en-US', '/help/articles/why-was-i-charged/', NULL, 'none', 'handed_off', NULL::boolean, '', 0, 0, 0, '1 day 4 hours'),
+  ('Do you sell matcha or loose-leaf tea?', 'en-AU', '/help/', NULL, 'none', 'no_source', NULL::boolean, '', 0, 0, 0, '14 hours'),
+  ('How do I make cold brew at home?', 'en-US', '/help/brewing-guides/', 'cold-brew-at-home', 'medium', 'answered', NULL::boolean, 'claude-opus-5-5', 2620, 187, 14220, '3 hours')
+) AS v("question", "language", "page_path", "slug", "confidence", "outcome", "helpful", "model",
+  "input_tokens", "output_tokens", "cost_micros", "ago")
+LEFT JOIN "kb_articles" a ON a."slug" = v."slug"
+WHERE NOT EXISTS (SELECT 1 FROM "question_logs" l WHERE l."question" = v."question");
+
+-- This month's AI spend (what the logged calls cost). Kept when the month already has a row.
+INSERT INTO "ai_usage" ("month", "spent_micros", "requests", "updated_at")
+VALUES (date_trunc('month', now())::date, 104660, 8, now())
+ON CONFLICT ("month") DO NOTHING;
 
 COMMIT;

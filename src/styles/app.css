@@ -30,15 +30,6 @@
   letter-spacing: -0.01em;
 }
 
-.visually-hidden {
-  position: absolute;
-  width: 1px;
-  height: 1px;
-  overflow: hidden;
-  clip-path: inset(50%);
-  white-space: nowrap;
-}
-
 .icon {
   flex: none;
   display: block;
@@ -563,7 +554,7 @@
   font-weight: var(--weight-semibold);
 }
 
-.setting-row p {
+.setting-row-text p {
   margin: var(--space-1) 0 0;
   color: var(--muted);
   font-size: var(--text-sm);
@@ -1142,7 +1133,7 @@
 }
 
 .progress-track {
-  fill: var(--hover);
+  fill: var(--line);
 }
 
 .progress-fill {
@@ -3301,4 +3292,61 @@
 .article-editor-preview h3 {
   font-size: var(--text-lg);
   line-height: var(--leading-lg);
+}
+
+/* ----------------------------------------------- the Assistant screen -- */
+/* src/portal/screens/assistant.tsx: list editors (quick replies, human-only topics), the spend line. */
+
+.screen-assistant .assistant-list-editor {
+  display: grid;
+  gap: var(--space-3);
+  min-width: 0;
+}
+
+.screen-assistant .assistant-add {
+  display: flex;
+  gap: var(--space-2);
+  min-width: 0;
+}
+
+.screen-assistant .assistant-add input {
+  flex: 1;
+  min-width: 0;
+}
+
+.screen-assistant .assistant-rows {
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+}
+
+.screen-assistant .assistant-rows .list-row {
+  padding: var(--space-1) var(--space-1) var(--space-1) var(--space-3);
+}
+
+.screen-assistant .assistant-rows .list-row-text {
+  overflow-wrap: anywhere;
+}
+
+.screen-assistant .assistant-chips {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  gap: var(--space-2);
+}
+
+.screen-assistant .assistant-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  max-width: 100%;
+  padding: 0 0 0 var(--space-3);
+  border-radius: var(--radius-sm);
+  overflow-wrap: anywhere;
+}
+
+.screen-assistant .assistant-spend {
+  margin: 0;
+  font-size: var(--text-lg);
+  line-height: var(--leading-lg);
+  font-weight: var(--weight-semibold);
 }
