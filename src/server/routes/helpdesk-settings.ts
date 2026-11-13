@@ -4,6 +4,7 @@ import {validator} from 'hono/validator';
 import type {PrismaClient} from '../../generated/prisma/client';
 import {AI_MODELS, AI_SECRET_NAMES, aiModelOf} from '../../lib/ai-models';
 import {ASK_LIMITS, type HelpdeskSettingsAdmin, type HelpdeskSettingsInput} from '../../lib/helpdesk-types';
+import {canonicalTimeZone} from '../../lib/time-zone';
 import {audit} from '../../platform/auth';
 import {cache} from '../../platform/cache';
 import {config} from '../../platform/config';
@@ -19,7 +20,8 @@ import {PERMISSIONS} from '../permissions';
  *
  *   GET   /   HelpdeskSettingsAdmin: the row, quick replies, human-only topics, whether the
  *             AI key is set (a boolean, NEVER the key) and this month's spend.
- *   PATCH /   HelpdeskSettingsInput (every field optional): one transaction (the row, and the
+ *   PATCH /   HelpdeskSettingsInput (every field optional; `timeZone` is checked with Intl and
+ *             stored canonical, for the weekly Knowledge health check): one transaction (the row, and the
  *             quick replies / topics replaced when sent), then the caches the public side reads
  *             (`HELPDESK_SETTINGS_KEY`, `helpdesk:widget`, the `kb:` group: /help/ shows the
  *             help title and intro) are cleared after commit, and the change is audited
@@ -68,23 +70,24 @@ function text(
  * A list of short lines: each trimmed, 1..`max` characters, at most `count`. Quick replies must
  * each be there once (422); topics are lower-cased and a repeat is simply dropped.
  */
-function list(value: unknown, count: number, max: number, lower: boolean): string[] | string {
-  if (!Array.isArray(value) || value.length > count * 2) return `Add at most ${count}.`;
+function list(value: unknown, count: number, max: number, lower: boolean, noun: [string, string]): string[] | string {
+  const [one, many] = noun;
+  if (!Array.isArray(value) || value.length > count * 2) return `Add at most ${count} ${many}.`;
   const out: string[] = [];
   const seen = new Set<string>();
   for (const item of value) {
     let entry = line(item);
-    if (!entry || entry.length > max) return `Each one needs 1 to ${max} characters.`;
+    if (!entry || entry.length > max) return `Each ${one} needs 1 to ${max} characters.`;
     if (lower) entry = entry.toLowerCase();
     const key = entry.toLowerCase();
     if (seen.has(key)) {
       if (lower) continue;
-      return `“${entry}” is in the list twice. Keep it once.`;
+      return `"${entry}" is in the list twice. Keep it once.`;
     }
     seen.add(key);
     out.push(entry);
   }
-  return out.length > count ? `Add at most ${count}.` : out;
+  return out.length > count ? `Add at most ${count} ${many}.` : out;
 }
 
 /** Checks the PATCH body field by field; unknown keys are ignored. */
@@ -92,12 +95,12 @@ function readInput(raw: unknown): {out: Partial<Input>; fields: Fields} {
   const v = objectOf(raw);
   const out: Partial<Input> = {};
   const fields: Fields = {};
-  text(v, out, fields, 'assistantName', 'The assistant’s name', 1, ASK_LIMITS.assistantName);
+  text(v, out, fields, 'assistantName', "The assistant's name", 1, ASK_LIMITS.assistantName);
   text(v, out, fields, 'greeting', 'The greeting', 1, ASK_LIMITS.greeting);
-  text(v, out, fields, 'launcherLabel', 'The button’s label', 1, ASK_LIMITS.launcherLabel);
+  text(v, out, fields, 'launcherLabel', "The button's label", 1, ASK_LIMITS.launcherLabel);
   text(v, out, fields, 'businessHours', 'Business hours', 0, ASK_LIMITS.businessHours);
-  text(v, out, fields, 'helpTitle', 'The help center’s title', 1, ASK_LIMITS.helpTitle);
-  text(v, out, fields, 'helpIntro', 'The help center’s intro', 0, ASK_LIMITS.helpIntro);
+  text(v, out, fields, 'helpTitle', "The help center's title", 1, ASK_LIMITS.helpTitle);
+  text(v, out, fields, 'helpIntro', "The help center's intro", 0, ASK_LIMITS.helpIntro);
   if (given(v, 'tone')) {
     if ((TONES as readonly unknown[]).includes(v.tone)) out.tone = v.tone as Input['tone'];
     else fields.tone = 'Pick friendly, neutral or formal.';
@@ -115,6 +118,12 @@ function readInput(raw: unknown): {out: Partial<Input>; fields: Fields} {
     if (typeof v.model === 'string' && MODEL_IDS.has(v.model)) out.model = v.model;
     else fields.model = 'Pick one of the models in the list.';
   }
+  if (given(v, 'timeZone')) {
+    // Stored in the canonical form Intl gives ('utc' → 'UTC'); the weekly check reads it.
+    const zone = canonicalTimeZone(v.timeZone);
+    if (zone) out.timeZone = zone;
+    else fields.timeZone = 'Pick a time zone from the list.';
+  }
   if (given(v, 'monthlyCapCents')) {
     const cap = v.monthlyCapCents;
     if (typeof cap === 'number' && Number.isInteger(cap) && cap >= 0 && cap <= ASK_LIMITS.monthlyCapCentsMax) {
@@ -124,12 +133,12 @@ function readInput(raw: unknown): {out: Partial<Input>; fields: Fields} {
     }
   }
   if (given(v, 'quickReplies')) {
-    const replies = list(v.quickReplies, ASK_LIMITS.quickReplies, ASK_LIMITS.quickReplyLabel, false);
+    const replies = list(v.quickReplies, ASK_LIMITS.quickReplies, ASK_LIMITS.quickReplyLabel, false, ['quick reply', 'quick replies']);
     if (typeof replies === 'string') fields.quickReplies = replies;
     else out.quickReplies = replies;
   }
   if (given(v, 'humanTopics')) {
-    const topics = list(v.humanTopics, ASK_LIMITS.humanTopics, ASK_LIMITS.humanTopic, true);
+    const topics = list(v.humanTopics, ASK_LIMITS.humanTopics, ASK_LIMITS.humanTopic, true, ['topic', 'topics']);
     if (typeof topics === 'string') fields.humanTopics = topics;
     else out.humanTopics = topics;
   }
@@ -155,6 +164,7 @@ const rowSelect = {
   businessHours: true,
   helpTitle: true,
   helpIntro: true,
+  timeZone: true,
 } as const;
 
 /** The schema's default cap (prisma/schema.prisma), used when the row is missing. */
@@ -172,6 +182,7 @@ type Row = {
   businessHours: string;
   helpTitle: string;
   helpIntro: string;
+  timeZone: string;
 };
 type Current = {row: Row; quickReplies: string[]; humanTopics: string[]};
 
@@ -187,7 +198,7 @@ async function readCurrent(db: PrismaClient): Promise<Current> {
     db.helpdeskHumanTopic.findMany({select: {keyword: true}, orderBy: {id: 'asc'}, take: ASK_LIMITS.humanTopics}),
   ]);
   return {
-    row: row ?? {...HELPDESK_DEFAULTS, monthlyCapCents: DEFAULT_CAP_CENTS},
+    row: row ?? {...HELPDESK_DEFAULTS, monthlyCapCents: DEFAULT_CAP_CENTS, timeZone: 'UTC'},
     quickReplies: replies.map(reply => reply.label),
     humanTopics: topics.map(topic => topic.keyword),
   };
@@ -210,6 +221,7 @@ function toAdmin(current: Current, usage: HelpdeskSettingsAdmin['usage']): Helpd
     businessHours: row.businessHours,
     helpTitle: row.helpTitle,
     helpIntro: row.helpIntro,
+    timeZone: row.timeZone,
     quickReplies: current.quickReplies,
     humanTopics: current.humanTopics,
     keys: {anthropic: Boolean(config.ownerSecret(AI_SECRET_NAMES.anthropic))},

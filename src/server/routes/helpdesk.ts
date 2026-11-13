@@ -262,7 +262,8 @@ export const helpdeskRoutes = new Hono()
       clientKey: client,
     });
 
-    const {log, ...result} = outcome;
+    // The public answer: never the log entry or the internal article ids behind the citations.
+    const {log, citedArticleIds: _internalIds, ...result} = outcome;
     const logId = await signLogId(await writeQuestionLog(db, log));
     return c.json({logId, ...result} satisfies AskResult);
   })

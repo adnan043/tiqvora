@@ -29,6 +29,7 @@ import {audit, CORE} from '../../platform/auth';
 import {permissionScope, problem, requireAuth, requirePermission, withDb, withViewer} from '../../platform/guards';
 import {IDEMPOTENCY_KEY, IdempotencyConflict, idempotent} from '../../platform/idempotency';
 import {COUNTER_UNSOLVED, COUNTER_WAITING, deleteTicket, solvedCounter, transition, weekKey} from '../helpdesk/state';
+import {queueArticleDraftLater} from '../knowledge/drafts';
 import {PERMISSIONS} from '../permissions';
 
 /**
@@ -54,7 +55,9 @@ import {PERMISSIONS} from '../permissions';
  * "Deleted customer"), `canSeeUser` says whether the agent may open them in Users, where the
  * email is shown to `site:user:read` holders only. Audited after commit: assigned, priority,
  * status (other moves), solved, reopened, deleted (ids, statuses and priorities only, never names
- * or text).
+ * or text). A move to solved (a reply with `setStatus: 'solved'`, or the status route) queues the
+ * `article-drafts` job after commit and after the answer (`queueArticleDraftLater`, src/server/knowledge/drafts.ts: never
+ * throws, deduped on `draft-<ticketId>`; a refused send is picked up by the Knowledge health tick).
  *
  * `priority=` filters only the Waiting and Mine queues; on Pending and Solved it is IGNORED (the
  * `(status, last_message_at desc, id desc)` index doesn't hold the priority, so a filtered Solved
@@ -621,7 +624,7 @@ export const inboxRoutes = new Hono()
             confidence: null,
             createdAt: row.created_at.toISOString(),
           };
-          return {message, status, from: locked.status};
+          return {message, status, from: locked.status, ticketId: locked.ticket_id};
         }
       );
     } catch (error) {
@@ -632,8 +635,12 @@ export const inboxRoutes = new Hono()
       if (error instanceof IdempotencyConflict) return c.json(problem(error.code, 'Reload the ticket and send again.'), 409);
       throw error;
     }
-    const {message, status, from} = result.value;
-    if (!result.replayed && input.kind === 'reply' && status !== from) await auditStatus(db, me, number, from, status);
+    const {message, status, from, ticketId} = result.value;
+    if (!result.replayed && input.kind === 'reply' && status !== from) {
+      await auditStatus(db, me, number, from, status);
+      // After commit AND after the answer (waitUntil): an article draft from this solved ticket.
+      if (status === 'solved') queueArticleDraftLater(c, ticketId, number);
+    }
     return c.json({message, status}, 201);
   })
 
@@ -650,6 +657,8 @@ export const inboxRoutes = new Hono()
     const moved = await transition(db, {conversationId: ticket.conversationId, from: [from], to});
     if (!moved) return changedMeanwhile(c);
     await auditStatus(db, c.var.viewer.id!, number, from, to);
+    // After commit AND after the answer (waitUntil): an article draft from this solved ticket.
+    if (to === 'solved') queueArticleDraftLater(c, moved.ticketId, number);
     return c.json({status: to});
   })
 

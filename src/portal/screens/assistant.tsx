@@ -3,6 +3,7 @@ import {type FormEvent, type KeyboardEvent, type ReactNode, useEffect, useRef, u
 
 import {AI_MODELS, aiModelOf} from '../../lib/ai-models';
 import {ASK_LIMITS, type HelpdeskSettingsAdmin, type HelpdeskSettingsInput} from '../../lib/helpdesk-types';
+import {timeZoneOptions} from '../../lib/time-zone';
 import {api, ApiError, read} from '../api';
 import {helpdeskSettingsQuery} from '../queries';
 import {
@@ -620,6 +621,53 @@ function HelpCenterCard({settings}: {settings: HelpdeskSettingsAdmin}) {
   );
 }
 
+const WEEKLY_FIELDS = ['timeZone'] as const;
+
+/** The zones the browser knows, once per page load (a few hundred names). */
+let zoneNames: string[] | null = null;
+const zoneOptions = (current: string) => {
+  zoneNames ??= timeZoneOptions();
+  // A saved zone this browser doesn't list still shows as picked.
+  const names = zoneNames.includes(current) ? zoneNames : [current, ...zoneNames];
+  return names.map(name => ({value: name, label: name.replaceAll('_', ' ')}));
+};
+
+function WeeklyCheckCard({settings}: {settings: HelpdeskSettingsAdmin}) {
+  const initial = (s: HelpdeskSettingsAdmin) => ({timeZone: s.timeZone});
+  const [saved, setSaved] = useState(() => initial(settings));
+  const form = useForm(saved, {timeZone: [rules.required('Pick a time zone from the list.')]});
+  const save = useSave(
+    WEEKLY_FIELDS,
+    next => {
+      setSaved(initial(next));
+      form.reset(initial(next));
+    },
+    fields => form.setServerErrors(fields)
+  );
+  const dirty = form.values.timeZone !== saved.timeZone;
+
+  return (
+    <SettingsCard
+      title="Weekly check"
+      description="Knowledge health looks for questions your help center couldn’t answer and articles that need a look, once a week."
+      dirty={dirty}
+      pending={save.isPending}
+      error={save.error}
+      names={WEEKLY_FIELDS}
+      onUndo={() => form.reset(saved)}
+      onSubmit={form.submit(values => save.mutate({timeZone: values.timeZone}))}>
+      <SettingRow title="Time zone" description="When the weekly check runs.">
+        {/* The row's title already says "Time zone": the field's own label is for screen readers only. */}
+        <Field id="f-timeZone" label={<span className="visually-hidden">Time zone for the weekly check</span>}
+          hint="The weekly Knowledge health check runs on Mondays at 07:30 in this time zone."
+          error={form.error('timeZone')}>
+          <Select {...form.field('timeZone')} options={zoneOptions(form.values.timeZone)} />
+        </Field>
+      </SettingRow>
+    </SettingsCard>
+  );
+}
+
 // ------------------------------------------------------------------ screen --
 
 export function Assistant() {
@@ -649,6 +697,7 @@ export function Assistant() {
           <SpendingCard settings={data} />
           <ChatButtonCard settings={data} />
           <HandoffCard settings={data} />
+          <WeeklyCheckCard settings={data} />
           <HelpCenterCard settings={data} />
         </>
       )}

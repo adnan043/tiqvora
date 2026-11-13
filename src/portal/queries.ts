@@ -14,6 +14,8 @@ import type {
 } from '../lib/helpdesk-tickets';
 import type {TicketPriority} from '../lib/helpdesk-tones';
 import type {HelpdeskSettingsAdmin} from '../lib/helpdesk-types';
+import type {HealthIssueDetail, HealthIssuesPage, HealthState, HealthType} from '../lib/knowledge-health-types';
+import type {TestCasesPage, TestRunView} from '../lib/test-lab';
 import type {ArticleStatus, KbManageArticle, KbManageArticlesPage, KbManageCategory, KbSnippetsPage} from '../lib/kb-types';
 import type {AdminUser, AuditRow, PermissionRow, RoleRow} from '../lib/types';
 import {refreshSession} from '../platform/browser';
@@ -359,5 +361,94 @@ export const helpdeskQuestionsQuery = (filter: QuestionFilter) =>
     queryFn: ({pageParam}) =>
       read<QuestionsPage>(api.helpdesk.reports.questions.$get({query: {filter, before: pageParam ?? ''}})),
     getNextPageParam: last => last.nextBefore ?? undefined,
+    staleTime: 60_000,
+  });
+
+
+// ------------------------------------------------ help desk: Knowledge health --
+// Holders of `site:helpdesk:reports` (`/dashboard/knowledge-health`). Accept, dismiss and
+// "Write a draft" invalidate `['helpdesk', 'health']` (the list, its counts and the open issue).
+
+/** The type filter of the list: one type, or every type. */
+export type HealthTypeFilter = HealthType | 'all';
+
+/** One tab and type filter, newest first, 20 a page; each page carries the open counts and the last weekly run. */
+export const healthIssuesQuery = (state: HealthState, type: HealthTypeFilter) =>
+  infiniteQueryOptions({
+    queryKey: ['helpdesk', 'health', 'issues', {state, type}],
+    initialPageParam: undefined as string | undefined,
+    queryFn: ({pageParam}) => read<HealthIssuesPage>(api.helpdesk.health.$get({query: {state, type, before: pageParam ?? ''}})),
+    getNextPageParam: last => (last.next ? String(last.next) : undefined),
+  });
+
+/** While a draft is being written: poll every 3 s, at most 40 times (2 minutes), then stop. */
+// Five minutes: a health draft retries after 1 and 2 minutes, so it can land well after the first try.
+const DRAFT_POLL = {everyMs: 3000, polls: 100} as const;
+/** When each issue's current poll began (browser memory only; one entry per open drawer at most). */
+const draftPollStarts = new Map<number, number>();
+
+/**
+ * One issue with its evidence and suggested draft. While the draft is `pending` it refetches
+ * every 3 s, for at most 40 polls; "Write a draft" again starts a new round.
+ */
+export const healthIssueQuery = (id: number) =>
+  queryOptions({
+    queryKey: ['helpdesk', 'health', 'issue', id],
+    queryFn: () => read<{issue: HealthIssueDetail}>(api.helpdesk.health[':id'].$get({param: {id: String(id)}})),
+    refetchInterval: query => {
+      if (query.state.data?.issue.draftState !== 'pending') {
+        draftPollStarts.delete(id);
+        return false;
+      }
+      const started = draftPollStarts.get(id) ?? Date.now();
+      draftPollStarts.set(id, started);
+      return Date.now() - started < DRAFT_POLL.everyMs * DRAFT_POLL.polls ? DRAFT_POLL.everyMs : false;
+    },
+    refetchIntervalInBackground: false,
+  });
+
+/** Forget a finished poll round, so the next "Write a draft" polls again from the start. */
+export const restartDraftPoll = (id: number) => draftPollStarts.delete(id);
+
+// ---------------------------------------------------------- help desk: Test Lab --
+// Holders of `site:helpdesk:settings` (`/dashboard/test-lab`). Every write invalidates
+// `['helpdesk', 'test-lab']`.
+
+/** The test questions, oldest first, 50 a page (keyset on id); each page carries the total, the latest run and its score. */
+export const testCasesQuery = infiniteQueryOptions({
+  queryKey: ['helpdesk', 'test-lab', 'cases'],
+  initialPageParam: '0',
+  queryFn: ({pageParam}) => read<TestCasesPage>(api.helpdesk['test-lab'].cases.$get({query: {after: pageParam}})),
+  getNextPageParam: last => (last.next ? String(last.next) : undefined),
+});
+
+/** A running run is polled every 5 s for its first minute, then every 10 s, and not after an hour. */
+const RUN_POLL = {fastMs: 5000, fastFor: 60_000, slowMs: 10_000, stopAfter: 60 * 60_000} as const;
+
+/** How often to poll a run of this age (from its `createdAt`), or false to stop. */
+export function runPollInterval(run: TestRunView | null | undefined, now = Date.now()): number | false {
+  if (run?.state !== 'running') return false;
+  const started = Date.parse(run.createdAt);
+  const age = Number.isNaN(started) ? 0 : Math.max(0, now - started);
+  if (age >= RUN_POLL.stopAfter) return false;
+  return age < RUN_POLL.fastFor ? RUN_POLL.fastMs : RUN_POLL.slowMs;
+}
+
+/**
+ * The latest run, polled while it is running (`runPollInterval`; the screen invalidates the cases
+ * when it leaves `running`, so their results show).
+ */
+export const testRunQuery = queryOptions({
+  queryKey: ['helpdesk', 'test-lab', 'run'],
+  queryFn: () => read<{run: TestRunView | null}>(api.helpdesk['test-lab'].runs.current.$get()),
+  refetchInterval: query => runPollInterval(query.state.data?.run),
+  refetchIntervalInBackground: false,
+});
+
+/** Published articles whose title holds `q` (20, by title), for a case's expected article. */
+export const testLabArticlesQuery = (q: string) =>
+  queryOptions({
+    queryKey: ['helpdesk', 'test-lab', 'articles', q],
+    queryFn: () => read<{items: {id: number; title: string}[]}>(api.helpdesk['test-lab'].articles.$get({query: {q}})),
     staleTime: 60_000,
   });

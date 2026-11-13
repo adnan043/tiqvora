@@ -1,14 +1,45 @@
 import type {PrismaClient} from '../generated/prisma/client';
-import {defineBackground, DontRetry} from '../platform/background';
+import {defineBackground, DontRetry, type JobInfo} from '../platform/background';
 import {config} from '../platform/config';
 import {getDb} from '../platform/db';
 import {runSummaryJob, sweepPendingSummaries} from './helpdesk/summary';
+import {runArticleDraftJob, runHealthDraftJob} from './knowledge/drafts';
+import {parseWeek, runKnowledgeHealth} from './knowledge/health';
+import {runTestLabBatch} from './knowledge/test-lab';
+import {runKnowledgeTick} from './knowledge/tick';
 import {deleteOldRateWindows} from './rate-window';
 
 function siteDb(): PrismaClient {
   const db = getDb();
   if (!db) throw new Error('The Site Database is off.');
   return db;
+}
+
+/** The largest id a column (INT) holds. */
+const INT_MAX = 2147483647;
+
+/** A positive id from a job's data (1 … 2^31−1, an INT column), or null. */
+function posInt(value: unknown): number | null {
+  return typeof value === 'number' && Number.isSafeInteger(value) && value > 0 && value <= INT_MAX ? value : null;
+}
+
+/** One field of a job's data (data is any JSON). */
+function field(data: unknown, name: string): unknown {
+  return data && typeof data === 'object' ? (data as Record<string, unknown>)[name] : undefined;
+}
+
+/**
+ * The site's address, for handlers that send the next job. Locally (Preview, tests) `sendJob`
+ * runs the handler in this process and never uses it, so a stand-in is fine there.
+ */
+function jobSiteUrl(job: JobInfo): string | null {
+  return config.siteUrl ?? (job.local ? 'http://localhost' : null);
+}
+
+function requireSiteUrl(job: JobInfo): string {
+  const url = jobSiteUrl(job);
+  if (!url) throw new Error("The site's address is not set.");
+  return url;
 }
 
 /** Old presence rows deleted per statement, and statements per nightly run (bounded). */
@@ -123,5 +154,49 @@ export const background = defineBackground({
   /** Nightly (background.json): recount the help desk tiles (a safety net; see above). */
   'helpdesk-counters': async () => {
     await recountHelpdeskCounters(siteDb());
+  },
+
+  /**
+   * Every 30 minutes, UTC (background.json schedule `knowledge-health`): starts the weekly
+   * Knowledge health run once per owner-local week (Mondays 07:30 in helpdesk_settings.time_zone),
+   * marks stalled runs failed, and re-sends article drafts refused at solve time
+   * (src/server/knowledge/tick.ts). No retries: the next tick comes in 30 minutes.
+   */
+  'knowledge-health-tick': async (_data, job) => {
+    await runKnowledgeTick(siteDb(), requireSiteUrl(job), new Date());
+  },
+
+  /**
+   * One week's Knowledge health run {week: 'YYYY-MM-DD'} (sent by the tick; chained with a cursor
+   * for big knowledge bases). No AI calls. Safe to repeat (src/server/knowledge/health.ts).
+   */
+  'knowledge-health': async (data, job) => {
+    const week = parseWeek(field(data, 'week'));
+    if (!week) throw new DontRetry('Bad week.');
+    await runKnowledgeHealth(siteDb(), week, job, jobSiteUrl(job));
+  },
+
+  /** An article draft from one solved ticket {ticketId} (sent by the solve paths and the tick). */
+  'article-drafts': async (data, job) => {
+    const ticketId = posInt(field(data, 'ticketId'));
+    if (ticketId === null) throw new DontRetry('Bad ticket id.');
+    await runArticleDraftJob(siteDb(), ticketId, job);
+  },
+
+  /** A draft for one Knowledge health issue {issueId} ("Write a draft" on the screen). */
+  'health-drafts': async (data, job) => {
+    const issueId = posInt(field(data, 'issueId'));
+    if (issueId === null) throw new DontRetry('Bad issue id.');
+    await runHealthDraftJob(siteDb(), issueId, job);
+  },
+
+  /** One Test Lab batch {runId, after} ("Run all"; each batch sends the next). */
+  'test-lab': async (data, job) => {
+    const runId = posInt(field(data, 'runId'));
+    if (runId === null) throw new DontRetry('Bad run id.');
+    const after = field(data, 'after');
+    if (typeof after !== 'number' || !Number.isSafeInteger(after) || after < 0 || after > INT_MAX) throw new DontRetry('Bad cursor.');
+    // No site address: the batch ends the run (failed/stalled) instead of leaving it running.
+    await runTestLabBatch(siteDb(), {runId, after}, job, jobSiteUrl(job));
   },
 });

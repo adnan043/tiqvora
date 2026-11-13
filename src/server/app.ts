@@ -17,8 +17,10 @@ import {helpdeskSettingsRoutes} from './routes/helpdesk-settings';
 import {inboxRoutes} from './routes/inbox';
 import {kbRoutes} from './routes/kb';
 import {kbManageRoutes} from './routes/kb-manage';
+import {knowledgeHealthRoutes} from './routes/knowledge-health';
 import {siteRoutes} from './routes/site';
 import {conversationRoutes, myTicketRoutes} from './routes/support';
+import {testLabRoutes} from './routes/test-lab';
 
 /**
  * The Site API: this site's ONLY backend, one Hono app at `/site-api/*`.
@@ -41,6 +43,8 @@ import {conversationRoutes, myTicketRoutes} from './routes/support';
  *   *    /helpdesk/tickets/... the inbox: queues, tickets, replies   routes/inbox.ts
  *   *    /helpdesk/canned/...  agents' saved replies                 routes/canned.ts
  *   GET  /helpdesk/reports/... assistant analytics (report holders)    routes/helpdesk-reports.ts
+ *   *    /helpdesk/health/...  Knowledge health issues (report holders)  routes/knowledge-health.ts
+ *   *    /helpdesk/test-lab/... Test Lab: cases and runs (its managers)  routes/test-lab.ts
  *   *    /helpdesk/...  the chat assistant: ask, helpful, widget routes/helpdesk.ts
  *   *    /checkout/...  start and confirm a payment             routes/checkout.ts
  *   *    /memberships/... the member's memberships               routes/checkout.ts
@@ -98,6 +102,8 @@ export const app = new Hono()
   .route('/helpdesk/tickets', inboxRoutes)
   .route('/helpdesk/canned', cannedRoutes)
   .route('/helpdesk/reports', helpdeskReportRoutes)
+  .route('/helpdesk/health', knowledgeHealthRoutes)
+  .route('/helpdesk/test-lab', testLabRoutes)
   .route('/helpdesk', helpdeskRoutes)
   .route('/memberships', membershipRoutes)
 

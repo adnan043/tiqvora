@@ -1,7 +1,8 @@
-import {describe, expect, it} from 'vitest';
+import {afterEach, describe, expect, it} from 'vitest';
 
 import {AI_MODELS, aiModelOf, costMicros, costMicrosFor, DEFAULT_AI_MODEL, priceOf} from '../src/lib/ai-models';
-import {asksForPerson, maskPersonalData, matchesHumanTopic} from '../src/server/ai/answer';
+import {answerQuestion, asksForPerson, maskPersonalData, matchesHumanTopic, type AnswerInput} from '../src/server/ai/answer';
+import {setAiProviderForTests, type ProviderRequest} from '../src/server/ai/provider';
 import {buildPrompt, parseAnswer, type Source} from '../src/server/ai/prompt';
 
 /**
@@ -9,8 +10,8 @@ import {buildPrompt, parseAnswer, type Source} from '../src/server/ai/prompt';
  * price of a call (src/lib/ai-models.ts). No network, no database.
  */
 const SOURCES: Source[] = [
-  {n: 1, title: 'Refunds and returns', heading: 'Refunds and returns — How to ask', text: 'Write to us within 30 days for a refund.', url: '/help/articles/refunds-and-returns/'},
-  {n: 2, title: 'Do you ship abroad?', heading: 'Do you ship abroad?', text: 'Yes, to the EU & the UK.', url: ''},
+  {n: 1, title: 'Refunds and returns', heading: 'Refunds and returns — How to ask', text: 'Write to us within 30 days for a refund.', url: '/help/articles/refunds-and-returns/', articleId: 7},
+  {n: 2, title: 'Do you ship abroad?', heading: 'Do you ship abroad?', text: 'Yes, to the EU & the UK.', url: '', articleId: null},
 ];
 
 const base = {assistantName: 'Bean Bot', tone: 'friendly', sources: SOURCES, history: [], question: 'How do I get a refund?'};
@@ -252,5 +253,126 @@ describe('maskPersonalData', () => {
     expect(maskPersonalData('Order 12345 for 2 bags, 19.99 each, on 2026-11-12')).toBe('Order 12345 for 2 bags, 19.99 each, on 2026-11-12');
     expect(maskPersonalData('ordered 12/11/2026')).toBe('ordered 12/11/2026');
     expect(maskPersonalData('model X1234567')).toBe('model X1234567');
+  });
+});
+
+describe('answerQuestion: Test Lab mode and cited article ids', () => {
+  /** A fake database: records each raw statement; every window and the reserve have room. */
+  function fakeDb() {
+    const sql: string[] = [];
+    const db = {
+      $queryRaw: async (strings: TemplateStringsArray) => {
+        const text = strings.join('?');
+        sql.push(text);
+        if (text.includes('EXISTS (SELECT 1 FROM a)')) return [{client: true, site: true}];
+        if (text.includes('"rate_windows"')) return [{count: 1}];
+        if (text.includes('ai_usage')) return [{requests: 1}];
+        return [];
+      },
+    };
+    return {db: db as unknown as AnswerInput['db'], sql};
+  }
+
+  const THREE: Source[] = [
+    {n: 1, title: 'Refunds', heading: '', text: 'Refunds within 30 days.', url: '/help/articles/refunds/', articleId: 7},
+    {n: 2, title: 'Shipping?', heading: '', text: 'EU and UK.', url: '', articleId: null},
+    {n: 3, title: 'Returns', heading: '', text: 'Send it back.', url: '/help/articles/returns/', articleId: 9},
+  ];
+
+  function input(db: AnswerInput['db'], extra: Partial<AnswerInput> = {}): AnswerInput {
+    return {
+      db,
+      key: 'test-key',
+      settings: {assistantName: 'Bean Bot', tone: 'neutral', confidenceThreshold: 'medium', model: ''},
+      capCents: 2000,
+      humanTopics: ['refund'],
+      question: 'How do I return my order?',
+      retrieved: {sources: THREE, topArticleId: 7},
+      history: [],
+      language: 'en',
+      page: '/',
+      clientKey: 'abc',
+      ...extra,
+    };
+  }
+
+  const reply = (citations: number[]) => {
+    const requests: ProviderRequest[] = [];
+    setAiProviderForTests(async (_key, req) => {
+      requests.push(req);
+      return {
+        ok: true,
+        text: JSON.stringify({answer: 'Send it back within 30 days.', citations, confidence: 'high', needsHuman: false, followUps: []}),
+        inputTokens: 100,
+        outputTokens: 20,
+        attempts: [{model: 'claude-opus-5-5', inputTokens: 100, outputTokens: 20}],
+        stopReason: 'end_turn',
+        refused: false,
+      };
+    });
+    return requests;
+  };
+
+  afterEach(() => setAiProviderForTests(null));
+
+  it("mode 'test' takes neither the ai-ask nor the client window, but still reserves against the cap", async () => {
+    reply([3, 2, 1]);
+    const {db, sql} = fakeDb();
+    const out = await answerQuestion(input(db, {mode: 'test', clientKey: null}));
+    expect(out.status).toBe('answered');
+    expect(sql.some(text => text.includes('rate_windows'))).toBe(false);
+    expect(sql.filter(text => text.includes('ai_usage'))).toHaveLength(1);
+    expect(out.log.heldMicros).toBeGreaterThan(0);
+    expect(out.log.month).toMatch(/^\d{4}-\d{2}-01$/);
+  });
+
+  it("the default (customer) mode still takes the windows", async () => {
+    reply([1]);
+    const {db, sql} = fakeDb();
+    await answerQuestion(input(db));
+    expect(sql.some(text => text.includes('rate_windows'))).toBe(true);
+  });
+
+  it("mode 'test' keeps the person and human-topic rules (no AI call)", async () => {
+    const requests = reply([1]);
+    const {db, sql} = fakeDb();
+    const topic = await answerQuestion(input(db, {mode: 'test', question: 'Can I get a refund?'}));
+    expect(topic.status).toBe('handoff');
+    expect(topic.log.model).toBe('');
+    expect(topic.citedArticleIds).toEqual([]);
+    const person = await answerQuestion(input(db, {mode: 'test', question: 'Let me talk to a real person'}));
+    expect(person.status).toBe('handoff');
+    expect(requests).toHaveLength(0);
+    expect(sql).toHaveLength(0);
+  });
+
+  it('citedArticleIds are the cited sources’ article ids (snippets have none), and never serialised', async () => {
+    reply([3, 2, 1]);
+    const {db} = fakeDb();
+    const out = await answerQuestion(input(db, {mode: 'test'}));
+    expect(out.citations.map(c => c.url)).toEqual(['/help/articles/returns/', '/help/articles/refunds/']);
+    expect(out.citedArticleIds).toEqual([9, 7]);
+    // Server-only: the ask route spreads the outcome and the JSON never carries it.
+    const {log: _log, ...result} = out;
+    expect(result).not.toHaveProperty('citedArticleIds');
+    expect(JSON.stringify(out)).not.toContain('citedArticleIds');
+  });
+
+  it('no usable citation → the top article, as the links show', async () => {
+    reply([2]);
+    const {db} = fakeDb();
+    const out = await answerQuestion(input(db, {mode: 'test'}));
+    expect(out.citations.map(c => c.url)).toEqual(['/help/articles/refunds/']);
+    expect(out.citedArticleIds).toEqual([7]);
+  });
+
+  it('a failed call → a hand-off with no cited ids, and the hold to settle', async () => {
+    setAiProviderForTests(async () => ({ok: false, reason: 'http'}));
+    const {db} = fakeDb();
+    const out = await answerQuestion(input(db, {mode: 'test'}));
+    expect(out.status).toBe('handoff');
+    expect(out.citedArticleIds).toEqual([]);
+    expect(out.log.costMicros).toBe(0);
+    expect(out.log.heldMicros).toBeGreaterThan(0);
   });
 });

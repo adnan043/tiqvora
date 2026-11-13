@@ -25,6 +25,7 @@ import {IDEMPOTENCY_KEY, IdempotencyConflict, idempotent} from '../../platform/i
 import {maskPersonalData} from '../ai/answer';
 import {countCreatedTicket, transition} from '../helpdesk/state';
 import {summarizeNewTicket} from '../helpdesk/summary';
+import {queueArticleDraftLater} from '../knowledge/drafts';
 import {HELPDESK_DEFAULTS} from '../kb/settings';
 import {clientRateKey, takeHourWindow, takeRateWindow} from '../rate-window';
 
@@ -818,6 +819,9 @@ export const myTicketRoutes = new Hono()
       target: ['ticket', number],
       meta: {by: 'customer', from: moved.oldStatus},
     });
+    // After commit AND after the answer (waitUntil): an article draft from this solved ticket
+    // (never throws; not on "already solved"; a lost send is picked up by the tick's sweep).
+    queueArticleDraftLater(c, moved.ticketId, number);
     return c.json({status: 'solved' as TicketStatus});
   })
 

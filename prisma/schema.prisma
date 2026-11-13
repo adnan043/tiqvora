@@ -463,6 +463,9 @@ model HelpdeskSettings {
   /// The help center's own words (`/help/`).
   helpTitle           String   @default("How can we help?") @map("help_title") @db.VarChar(120)
   helpIntro           String   @default("Search our guides, or ask the assistant.") @map("help_intro") @db.VarChar(300)
+  /// IANA zone for the weekly Knowledge health check (Mondays 07:30 local). Canonical form
+  /// (`Intl…resolvedOptions().timeZone`), validated by src/lib/time-zone.ts. CHECK on shape.
+  timeZone            String   @default("UTC") @map("time_zone") @db.VarChar(64)
   updatedBy           Int?     @map("updated_by")
   updatedAt           DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
 
@@ -535,6 +538,8 @@ model KbArticle {
   updatedAt       DateTime   @updatedAt @map("updated_at") @db.Timestamptz(3)
   category        KbCategory @relation(fields: [categoryId], references: [id], onDelete: Restrict)
   chunks          KbChunk[]
+  healthIssues    HealthIssue[]
+  testCases       TestCase[]
 
   /// A category's articles by status (the FK first).
   @@index([categoryId, status, id])
@@ -733,12 +738,16 @@ model Ticket {
   /// 1–5 (CHECK), once, only while solved.
   csat            Int?      @db.SmallInt
   csatAt          DateTime? @map("csat_at") @db.Timestamptz(3)
+  /// When the article-draft job finished with this ticket (a draft written, nothing to draft, or
+  /// given up). Null on a solved ticket = still to do (partial index tickets_draft_unchecked_idx).
+  draftCheckedAt  DateTime? @map("draft_checked_at") @db.Timestamptz(3)
   createdAt       DateTime  @default(now()) @map("created_at") @db.Timestamptz(3)
   updatedAt       DateTime  @updatedAt @map("updated_at") @db.Timestamptz(3)
 
   conversation Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
   assignee     User?        @relation("TicketAssignee", fields: [assigneeId], references: [id], onDelete: SetNull)
   views        TicketView[]
+  healthIssue  HealthIssue?
 
   /// Assigned to me (assignee = me AND solved_at IS NULL), also the FK's index.
   @@index([assigneeId, solvedAt, id])
@@ -802,4 +811,145 @@ model QuestionStatsDaily {
   updatedAt   DateTime @default(now()) @map("updated_at") @db.Timestamptz(3)
 
   @@map("question_stats_daily")
+}
+
+// ---------------------------------------------------------------------------
+// Knowledge health and Test Lab (Phase 4). CHECKs and the partial indexes
+// (health_issues_open_key, test_runs_one_running_key, tickets_draft_unchecked_idx)
+// live only in the migration SQL: never let a later migration DROP them.
+
+/// Knowledge health: one thing in the knowledge base that needs a person's look.
+/// Written ONLY by background jobs (src/server/knowledge/*) and the accept/dismiss routes.
+model HealthIssue {
+  id                Int       @id @default(autoincrement())
+  /// `gap`, `stale`, `conflict` or `low_rated` (CHECK).
+  type              String    @db.VarChar(9)
+  /// The article it is about, or the article a draft edits. Null = a new article. SetNull: the
+  /// issue outlives a deleted article (shown as "Article deleted"; Accept then creates a new draft).
+  articleId         Int?      @map("article_id")
+  /// The solved ticket a draft came from. UNIQUE: the DB-level idempotency of `draft-<ticketId>`
+  /// (one issue per ticket, whatever its state). Cascade: deleting a ticket (spam) deletes its draft.
+  sourceTicketId    Int?      @unique @map("source_ticket_id")
+  /// What makes two findings "the same issue": `ticket:<id>`, `article:<id>`, or md5 of a gap
+  /// cluster key (`q:<lexemes>` / `a:<articleId>`). Unique per type among OPEN rows (partial index).
+  fingerprint       String    @db.VarChar(64)
+  /// The owner-local Monday of the weekly run that found or last refreshed it; null for drafts.
+  week              DateTime? @db.Date
+  /// Snapshot, <= 8 KB (validated where written): counts and up to 5 sample questions (masked).
+  evidence          Json      @default("{}")
+  suggestedTitle    String    @default("") @map("suggested_title") @db.VarChar(160)
+  /// Markdown, <= 20,000 characters. '' = no draft yet.
+  suggestedBody     String    @default("") @map("suggested_body") @db.Text
+  /// `none`, `pending`, `ready` or `failed` (CHECK).
+  draftState        String    @default("none") @map("draft_state") @db.VarChar(8)
+  /// Why the last draft failed: `off`, `cap` or `failed` (CHECK), else null.
+  draftError        String?   @map("draft_error") @db.VarChar(8)
+  /// "Write a draft" presses so far, 0-3 (CHECK). Part of the job key.
+  draftAttempts     Int       @default(0) @map("draft_attempts") @db.SmallInt
+  /// `open`, `accepted` or `dismissed` (CHECK).
+  state             String    @default("open") @db.VarChar(9)
+  /// The draft article Accept created or updated. No FK (like created_by): a history value.
+  acceptedArticleId Int?      @map("accepted_article_id")
+  /// `users.id`, no FK (like kb_articles.created_by).
+  resolvedBy        Int?      @map("resolved_by")
+  resolvedAt        DateTime? @map("resolved_at") @db.Timestamptz(3)
+  createdAt         DateTime  @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt         DateTime  @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  article      KbArticle? @relation(fields: [articleId], references: [id], onDelete: SetNull)
+  sourceTicket Ticket?    @relation(fields: [sourceTicketId], references: [id], onDelete: Cascade)
+
+  /// The screen's list by state, newest first (keyset on id).
+  @@index([state, id])
+  /// The same, filtered by type.
+  @@index([state, type, id])
+  /// The FK (SetNull on article delete).
+  @@index([articleId])
+  /// "Dismissed or accepted in the last 90 days?" (the snooze lookups of the weekly run).
+  @@index([type, fingerprint, resolvedAt])
+  @@map("health_issues")
+}
+
+/// One weekly Knowledge health run: the guard row (one per owner-local week) and its progress.
+model KnowledgeHealthRun {
+  /// The owner-local Monday ('YYYY-MM-DD') the run belongs to.
+  week          DateTime  @id @db.Date
+  timeZone      String    @map("time_zone") @db.VarChar(64)
+  /// [windowStart, windowEnd): the 7 days before Monday 07:30 local, as instants.
+  windowStart   DateTime  @map("window_start") @db.Timestamptz(3)
+  windowEnd     DateTime  @map("window_end") @db.Timestamptz(3)
+  /// `gaps`, `articles` or `done` (CHECK).
+  phase         String    @default("gaps") @db.VarChar(8)
+  /// Last kb_articles.id scanned in the `articles` phase.
+  cursor        Int       @default(0)
+  /// `running`, `done` or `failed` (CHECK).
+  state         String    @default("running") @db.VarChar(7)
+  gapsFound     Int       @default(0) @map("gaps_found")
+  staleFound    Int       @default(0) @map("stale_found")
+  lowRatedFound Int       @default(0) @map("low_rated_found")
+  startedAt     DateTime  @default(now()) @map("started_at") @db.Timestamptz(3)
+  updatedAt     DateTime  @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(3)
+  finishedAt    DateTime? @map("finished_at") @db.Timestamptz(3)
+
+  @@map("knowledge_health_runs")
+}
+
+/// A question the owner tests the assistant with (Test Lab). <= 500 rows (enforced in the insert).
+model TestCase {
+  id                Int       @id @default(autoincrement())
+  /// As typed, one line, 3-500.
+  question          String    @db.VarChar(500)
+  /// normalizeQuestion(question) (src/lib/test-lab.ts): lower-case, single spaces, no trailing
+  /// punctuation. UNIQUE: the same question isn't added twice (import dedupe).
+  questionKey       String    @unique @map("question_key") @db.VarChar(500)
+  /// `answer` (a cited answer passes) or `handoff` (a hand-off passes) (CHECK).
+  /// A `handoff` case has no expected article (validated in the routes).
+  expect            String    @default("answer") @db.VarChar(8)
+  /// The article a right answer cites. SetNull when it is deleted.
+  expectedArticleId Int?      @map("expected_article_id")
+  lastAnswer        String?   @map("last_answer") @db.VarChar(1200)
+  /// `high|medium|low|none`, else null (never run).
+  lastConfidence    String?   @map("last_confidence") @db.VarChar(8)
+  /// [{id: number|null, title, url}] <= 3, what the answer cited. Snapshot.
+  lastSources       Json?     @map("last_sources")
+  /// `pass`, `handoff`, `person`, `no_source`, `wrong_source`, `answered_instead`, `cap`, `error`
+  /// (CHECK), else null.
+  lastOutcome       String?   @map("last_outcome") @db.VarChar(16)
+  /// Null = not run (or skipped in its last run).
+  lastPassed        Boolean?  @map("last_passed")
+  lastRunAt         DateTime? @map("last_run_at") @db.Timestamptz(3)
+  /// The run that wrote last*: makes a repeated batch a no-op. No FK.
+  lastRunId         Int?      @map("last_run_id")
+  createdBy         Int       @map("created_by")
+  createdAt         DateTime  @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt         DateTime  @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  expectedArticle KbArticle? @relation(fields: [expectedArticleId], references: [id], onDelete: SetNull)
+
+  @@index([expectedArticleId])
+  @@map("test_cases")
+}
+
+/// One "Run all". At most ONE `running` at a time (partial unique index test_runs_one_running_key).
+model TestRun {
+  id         Int       @id @default(autoincrement())
+  /// `running`, `done`, `cancelled`, `stopped` (cap / AI off) or `failed` (CHECK).
+  state      String    @default("running") @db.VarChar(9)
+  /// For `stopped` / `failed`: `cap`, `ai_off`, `not_started`, `stalled`, `error` (CHECK), else null.
+  stopReason String?   @map("stop_reason") @db.VarChar(12)
+  /// Cases when it started (ids <= maxCaseId); cases added later are not in this run.
+  total      Int
+  maxCaseId  Int       @map("max_case_id")
+  /// Cases with a result in this run, and how many passed.
+  done       Int       @default(0)
+  passed     Int       @default(0)
+  /// Last test_cases.id finished; the next batch reads id > cursor.
+  cursor     Int       @default(0)
+  costMicros BigInt    @default(0) @map("cost_micros")
+  startedBy  Int       @map("started_by")
+  createdAt  DateTime  @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt  DateTime  @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(3)
+  finishedAt DateTime? @map("finished_at") @db.Timestamptz(3)
+
+  @@map("test_runs")
 }

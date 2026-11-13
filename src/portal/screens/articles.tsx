@@ -115,7 +115,7 @@ const toInput = (values: ArticleForm): KbArticleInput => ({
  * help center will (`POST /site-api/kb/manage/preview`). Cached per body, so
  * switching tabs back and forth sends nothing new.
  */
-function ArticlePreview({markdown}: {markdown: string}) {
+export function ArticlePreview({markdown}: {markdown: string}) {
   const preview = useQuery({
     queryKey: ['kb-preview', markdown],
     queryFn: () => read<{html: string}>(api.kb.manage.preview.$post({json: {body: markdown}})),
@@ -143,6 +143,8 @@ export function Articles() {
   const [filter, setFilter] = useState<KbArticleFilters>(KB_ALL_ARTICLES);
   const [q, setQ] = useState('');
   const [editing, setEditing] = useState<KbManageArticle | 'new' | null>(null);
+  // Opened from a link (`?edit=12`, Knowledge health's "Open draft"): say where the draft came from.
+  const [fromLink, setFromLink] = useState(false);
   // The slug follows the title until someone types in it (never for a saved article: its address is in use).
   const [slugEdited, setSlugEdited] = useState(false);
   const form = useForm(EMPTY_ARTICLE, ARTICLE_RULES);
@@ -192,6 +194,7 @@ export function Articles() {
       });
       save.reset();
       setSlugEdited(true);
+      setFromLink(false);
       setEditing(article);
     },
   });
@@ -227,6 +230,7 @@ export function Articles() {
     form.reset({...EMPTY_ARTICLE, categoryId: filter.categoryId === '' ? '' : String(filter.categoryId)});
     save.reset();
     setSlugEdited(false);
+    setFromLink(false);
     setEditing('new');
   };
   const closeDrawer = () => {
@@ -242,6 +246,18 @@ export function Articles() {
     void navigate({to: '/articles', search: {}, replace: true});
     // Only when the flag appears: startNew and navigate are new on every render.
   }, [search.new]);
+
+  // `?edit=12` (Knowledge health's "Open draft"): open that article's editor once, then drop the id.
+  // While it loads, a line says so (the editor opens when it arrives).
+  const [linkOpening, setLinkOpening] = useState(false);
+  useEffect(() => {
+    if (!search.edit) return;
+    const id = search.edit;
+    setLinkOpening(true);
+    open.mutate(id, {onSuccess: () => setFromLink(true), onSettled: () => setLinkOpening(false)});
+    void navigate({to: '/articles', search: {}, replace: true});
+    // Only when the id appears: open and navigate are new on every render.
+  }, [search.edit]);
 
   const runSearch = (event: FormEvent) => {
     event.preventDefault();
@@ -388,6 +404,11 @@ export function Articles() {
       )}
       {categories.error && <ErrorNote error={categories.error} title="The categories could not load" />}
       {rowError && <ErrorNote error={rowError} />}
+      {linkOpening && open.isPending && (
+        <Notice tone="info" title="Opening the article…">
+          The editor opens in a moment.
+        </Notice>
+      )}
 
       <div className="toolbar">
         <form role="search" onSubmit={runSearch} noValidate>
@@ -499,6 +520,12 @@ export function Articles() {
           </>
         }>
         <div className="form-stack">
+          {fromLink && saved?.status === 'draft' && (
+            <Notice tone="info" title="Saved from Knowledge health">
+              Check it and fill in anything missing before you publish. If it rewrites a published article, that one stays as it
+              is: copy this text over, or publish this draft and archive the old one.
+            </Notice>
+          )}
           <Field id="f-title" label="Title" hint="The question or task, in the customer's words." error={form.error('title')}>
             <input
               {...titleField}

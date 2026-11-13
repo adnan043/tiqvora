@@ -17,12 +17,15 @@ import {isQuestionFilter, isReportRange, type QuestionFilter, type ReportRange} 
 import {clearHelpdeskStorage} from '../lib/helpdesk-storage';
 import {QUEUES, type Queue, TICKET_PRIORITIES} from '../lib/helpdesk-tickets';
 import type {TicketPriority} from '../lib/helpdesk-tones';
+import {HEALTH_STATES, HEALTH_TYPES, type HealthState, type HealthType} from '../lib/knowledge-health-types';
 import type {Abilities} from '../lib/types';
 import {logout} from '../platform/browser';
 import {
   auditQuery,
   firstAuditQuery,
   firstUsersQuery,
+  healthIssueQuery,
+  healthIssuesQuery,
   healthQuery,
   helpdeskQuestionsQuery,
   helpdeskReportQuery,
@@ -45,6 +48,8 @@ import {
   supportTicketQuery,
   supportTicketsQuery,
   supportUnreadQuery,
+  testCasesQuery,
+  testRunQuery,
   twoFactorQuery,
   usersQuery,
 } from './queries';
@@ -178,7 +183,9 @@ const NAV_GROUPS: {label: string; items: NavItem[]}[] = [
       {to: '/inbox', label: 'Inbox', icon: 'inbox', ability: 'useInbox'},
       {to: '/saved-replies', label: 'Saved replies', icon: 'copy', ability: 'useInbox'},
       {to: '/assistant', label: 'Assistant', icon: 'zap', ability: 'manageHelpdesk'},
+      {to: '/test-lab', label: 'Test Lab', icon: 'flask', ability: 'manageHelpdesk'},
       {to: '/analytics', label: 'Analytics', icon: 'trending-up', ability: 'seeHelpdeskReports'},
+      {to: '/knowledge-health', label: 'Knowledge health', icon: 'check-circle', ability: 'seeHelpdeskReports'},
     ],
   },
   {
@@ -471,8 +478,8 @@ const accountRoute = createRoute({
   path: '/account',
   staticData: {title: 'Your account'},
   // `?tab=security`: a link can open one section of the account screen.
-  validateSearch: (search: Record<string, unknown>): {tab?: string} =>
-    typeof search.tab === 'string' ? {tab: search.tab} : {},
+  // Every key is returned (undefined when bad): the router merges the raw search over it.
+  validateSearch: (search: Record<string, unknown>): {tab?: string} => ({tab: typeof search.tab === 'string' ? search.tab : undefined}),
   loader: ({context: {queryClient}}) =>
     warm(
       queryClient.ensureQueryData(meQuery),
@@ -482,13 +489,33 @@ const accountRoute = createRoute({
   component: lazyRouteComponent(() => import('./screens/account'), 'Account'),
 });
 // The knowledge base (holders of `site:kb:edit`; the routes' guards enforce it).
+export type ArticlesSearch = {new?: boolean; edit?: number};
+
+/**
+ * `new` only as true; `edit` only as a positive whole number. Anything else is dropped: EVERY key
+ * is returned, undefined when bad, because the router merges the raw search params over what a
+ * parser leaves out (a bad value would otherwise reach the screen).
+ */
+export function parseArticlesSearch(search: Record<string, unknown>): ArticlesSearch {
+  return {
+    new: search.new === true || search.new === 'true' ? true : undefined,
+    edit: positiveId(search.edit) ?? undefined,
+  };
+}
+
+/** A database id from the URL (`12` or `"12"`), or null. */
+function positiveId(value: unknown): number | null {
+  const id = typeof value === 'number' ? value : typeof value === 'string' && /^\d{1,9}$/.test(value) ? Number(value) : NaN;
+  return Number.isSafeInteger(id) && id > 0 ? id : null;
+}
+
 const articlesRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: '/articles',
   staticData: {title: 'Articles'},
   // `?new=true` (the overview's "Write an article"): open the editor on a blank article.
-  validateSearch: (search: Record<string, unknown>): {new?: boolean} =>
-    search.new === true || search.new === 'true' ? {new: true} : {},
+  // `?edit=12` (Knowledge health's "Open draft"): open that article's editor.
+  validateSearch: parseArticlesSearch,
   loader: ({context: {queryClient}}) =>
     warm(queryClient.ensureInfiniteQueryData(kbArticlesQuery(KB_ALL_ARTICLES)), queryClient.ensureQueryData(kbCategoriesQuery)),
   component: lazyRouteComponent(() => import('./screens/articles'), 'Articles'),
@@ -528,12 +555,15 @@ const assistantRoute = createRoute({
 export type AnalyticsSearch = {range?: ReportRange; filter?: QuestionFilter};
 export const ANALYTICS_DEFAULTS = {range: '4w', filter: 'all'} as const satisfies Required<AnalyticsSearch>;
 
-/** Anything invalid or default is dropped, so the plain address is the default view. */
+/**
+ * Anything invalid or default is dropped, so the plain address is the default view. Every key is
+ * returned (undefined when dropped): the router merges the raw search over missing keys.
+ */
 export function parseAnalyticsSearch(search: Record<string, unknown>): AnalyticsSearch {
-  const out: AnalyticsSearch = {};
-  if (isReportRange(search.range) && search.range !== ANALYTICS_DEFAULTS.range) out.range = search.range;
-  if (isQuestionFilter(search.filter) && search.filter !== ANALYTICS_DEFAULTS.filter) out.filter = search.filter;
-  return out;
+  return {
+    range: isReportRange(search.range) && search.range !== ANALYTICS_DEFAULTS.range ? search.range : undefined,
+    filter: isQuestionFilter(search.filter) && search.filter !== ANALYTICS_DEFAULTS.filter ? search.filter : undefined,
+  };
 }
 
 const analyticsRoute = createRoute({
@@ -553,18 +583,73 @@ const analyticsRoute = createRoute({
   },
   component: lazyRouteComponent(() => import('./screens/analytics'), 'Analytics'),
 });
+// Knowledge health (holders of `site:helpdesk:reports`; the routes' guards enforce it).
+// The tab, the type filter and the open issue are in the URL
+// (`/knowledge-health?state=dismissed&type=gap&issue=12`); absent = open issues of every type.
+export type KnowledgeHealthSearch = {state?: Exclude<HealthState, 'open'>; type?: HealthType; issue?: number};
+
+/**
+ * Anything invalid or default is dropped, so the plain address is the default view. Every key is
+ * returned (undefined when dropped): the router merges the raw search over missing keys, so
+ * `?state=bogus` would otherwise reach the screen.
+ */
+export function parseKnowledgeHealthSearch(search: Record<string, unknown>): KnowledgeHealthSearch {
+  return {
+    state:
+      HEALTH_STATES.includes(search.state as HealthState) && search.state !== 'open'
+        ? (search.state as Exclude<HealthState, 'open'>)
+        : undefined,
+    type: HEALTH_TYPES.includes(search.type as HealthType) ? (search.type as HealthType) : undefined,
+    issue: positiveId(search.issue) ?? undefined,
+  };
+}
+
+const knowledgeHealthRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: '/knowledge-health',
+  staticData: {title: 'Knowledge health'},
+  validateSearch: parseKnowledgeHealthSearch,
+  loaderDeps: ({search}) => ({state: search.state ?? ('open' as const), type: search.type ?? ('all' as const), issue: search.issue}),
+  loader: async ({context: {queryClient}, deps}) => {
+    const me = await queryClient.ensureQueryData(meQuery).catch(() => null);
+    // Not allowed: the screen shows the API's refusal; nothing to fetch.
+    if (!me?.abilities.seeHelpdeskReports) return;
+    // The picked issue loads in the background: opening one never waits on the router.
+    if (deps.issue) void queryClient.prefetchQuery(healthIssueQuery(deps.issue));
+    await warm(queryClient.ensureInfiniteQueryData(healthIssuesQuery(deps.state, deps.type)));
+  },
+  component: lazyRouteComponent(() => import('./screens/knowledge-health'), 'KnowledgeHealth'),
+});
+// Test Lab (holders of `site:helpdesk:settings`; the routes' guards enforce it).
+const testLabRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: '/test-lab',
+  staticData: {title: 'Test Lab'},
+  loader: async ({context: {queryClient}}) => {
+    const me = await queryClient.ensureQueryData(meQuery).catch(() => null);
+    if (!me?.abilities.manageHelpdesk) return;
+    await warm(
+      queryClient.ensureInfiniteQueryData(testCasesQuery),
+      queryClient.ensureQueryData(testRunQuery),
+      queryClient.ensureQueryData(helpdeskSettingsQuery)
+    );
+  },
+  component: lazyRouteComponent(() => import('./screens/test-lab'), 'TestLab'),
+});
 // The help desk inbox (holders of `site:helpdesk:inbox`; the routes' guards enforce it).
 // Its state is in the URL, so a shared link opens exactly it: `/inbox?view=mine&ticket=1042`.
 export type InboxSearch = {view?: Queue; priority?: TicketPriority; ticket?: number};
 
-/** Anything invalid is dropped (unknown view → absent = "Waiting on us"). */
+/**
+ * Anything invalid is dropped (unknown view → absent = "Waiting on us"). Every key is returned
+ * (undefined when dropped): the router merges the raw search over missing keys.
+ */
 export function parseInboxSearch(search: Record<string, unknown>): InboxSearch {
-  const out: InboxSearch = {};
-  if (QUEUES.includes(search.view as Queue)) out.view = search.view as Queue;
-  if (TICKET_PRIORITIES.includes(search.priority as TicketPriority)) out.priority = search.priority as TicketPriority;
-  const ticket = ticketNumberOf(search.ticket);
-  if (ticket !== null) out.ticket = ticket;
-  return out;
+  return {
+    view: QUEUES.includes(search.view as Queue) ? (search.view as Queue) : undefined,
+    priority: TICKET_PRIORITIES.includes(search.priority as TicketPriority) ? (search.priority as TicketPriority) : undefined,
+    ticket: ticketNumberOf(search.ticket) ?? undefined,
+  };
 }
 
 const inboxRoute = createRoute({
@@ -660,7 +745,9 @@ export const routeTree = rootRoute.addChildren([
   snippetsRoute,
   importRoute,
   assistantRoute,
+  testLabRoute,
   analyticsRoute,
+  knowledgeHealthRoute,
   inboxRoute,
   savedRepliesRoute,
   supportRoute,

@@ -120,6 +120,7 @@ export async function retrieve(db: PrismaClient, question: string, previous = ''
     text: row.text ?? '',
     // A snippet is never cited as a link.
     url: row.article_id !== null && row.slug ? `/help/articles/${row.slug}/` : '',
+    articleId: row.article_id !== null ? Number(row.article_id) : null,
   }));
   const top = rows.find(row => row.article_id !== null);
   return {sources, topArticleId: top ? Number(top.article_id) : null};

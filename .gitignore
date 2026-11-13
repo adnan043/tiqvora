@@ -11,3 +11,8 @@ src/generated
 
 # Live platform docs fetched by `npm run platform -- docs`.
 .platform/
+
+# Editor and agent settings: never part of the store listing.
+.claude/
+.vscode/
+.cursor/

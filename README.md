@@ -2,7 +2,9 @@
 
 A help desk for one business, on one site: a public **help center** of articles, an **AI
 assistant** in a chat window that answers from those articles, a **hand-off to a person** when
-it can't, an **inbox** where your team answers, and **analytics** on what customers ask.
+it can't, an **inbox** where your team answers, **analytics** on what customers ask, a weekly
+**knowledge health** check with article drafts for a person to review, and a **Test Lab** to try
+the assistant before customers do.
 
 Built on the Web App template: [Astro](https://astro.build) pages, a [Hono](https://hono.dev)
 backend at `/site-api`, a React dashboard at `/dashboard`, and Postgres through
@@ -49,6 +51,33 @@ This file is for you, the site's owner, and for the AI agent that changes the si
    and rate it 1–5.
 7. **Analytics** shows how many questions came in, how many the assistant answered, which were
    handed to a person or found no article, what customers rated helpful, and what it cost.
+8. **Knowledge health** lists what your help center is missing or getting wrong. A weekly check
+   runs every **Monday at 07:30 in your time zone** (Dashboard › Assistant › Weekly check) over the
+   past 7 days and files:
+   - **Gaps**: questions asked at least twice that found no article, or were answered with low
+     confidence (grouped by their words, or by the weak article; at most 50 a week);
+   - **Stale** articles: published and not reviewed for 180 days;
+   - **Low rated** articles: 10 or more votes, and 30% or more "not helpful".
+
+   **Conflicts** come from solved tickets (below): an agent's answer that contradicts the article
+   the assistant cited. The weekly check makes **no AI calls** and writes no drafts by itself. Open
+   an issue to see why it's there (sample questions, votes, the ticket); press **Write a draft**
+   to have the assistant write one (3 tries per issue). **Accept** saves your edited text as a
+   **draft article** in Articles, never published: a person publishes it. It updates the issue's
+   own draft article only if nobody edited it since; otherwise, and always for a published
+   article, it makes a new draft. **Dismiss** hides the issue, and the same finding isn't flagged
+   again for 90 days.
+9. **Article drafts from solved tickets.** When a ticket is solved (by an agent or the customer),
+   the assistant reads the conversation and, if the agent explained something reusable, writes a
+   draft (a new article, or an edit to the article it cited) and files it in Knowledge health as a
+   gap or a conflict, "Found by: A solved ticket". A one-off fix gets no draft. Nothing is
+   published without a person pressing Accept and then Publish.
+10. **Test Lab** (Dashboard › Test Lab): a list of questions your customers ask (up to 500; add
+    them one by one or paste up to 100 at a time), each expecting **an answer citing an article**
+    (or any answer) or **a hand-off to a person**. **Run all** asks every question through the real
+    assistant in the background, 10 at a time, and shows each answer, what it cited and whether
+    it passed, plus a **Ready to launch** score (0–100: "Ready to launch" needs 85+ on 10 or more
+    questions). Test runs are not in Analytics or the weekly check.
 
 ## Where each feature lives
 
@@ -67,6 +96,13 @@ This file is for you, the site's owner, and for the AI agent that changes the si
 | AI ticket summary | top of each ticket in the Inbox | `src/server/helpdesk/summary.ts` |
 | Saved replies | Dashboard › Saved replies, and the picker in a ticket | `src/portal/screens/canned.tsx`, `src/portal/screens/inbox/saved-replies.tsx`, `src/server/routes/canned.ts` |
 | Analytics | Dashboard › Analytics | `src/portal/screens/analytics.tsx`, `src/server/routes/helpdesk-reports.ts`, `src/lib/helpdesk-report-types.ts` |
+| Knowledge health (issues, Accept, Dismiss, Write a draft) | Dashboard › Knowledge health | `src/portal/screens/knowledge-health.tsx`, `src/server/routes/knowledge-health.ts` (`/site-api/helpdesk/health`), `src/lib/knowledge-health-types.ts` |
+| The weekly check | background job, Mondays 07:30 your time | `src/server/knowledge/tick.ts` (starts it), `src/server/knowledge/health.ts` (finds the issues) |
+| Article drafts (solved tickets, Write a draft) | Knowledge health › an issue | `src/server/knowledge/drafts.ts` (the jobs), `src/server/ai/draft.ts` (what is sent, and the checks on what comes back) |
+| Accept → draft article | Knowledge health › an issue › Accept | `src/server/knowledge/accept.ts`, `src/server/kb/articles.ts` (the article write path, shared with the editors) |
+| Weekly check time zone | Dashboard › Assistant › Weekly check | `src/lib/time-zone.ts`, `src/server/routes/helpdesk-settings.ts` |
+| Test Lab | Dashboard › Test Lab | `src/portal/screens/test-lab.tsx`, `src/server/routes/test-lab.ts` (`/site-api/helpdesk/test-lab`), `src/server/knowledge/test-lab.ts` (the runs), `src/lib/test-lab.ts` (limits, import, score) |
+| AI spending for drafts and Test Lab | | `src/server/ai/spend.ts` (with `src/server/ai/usage.ts`) |
 | Overview tiles (open, waiting, solved this week) | Dashboard › Overview | `src/portal/screens/overview.tsx`, counters in `src/server/helpdesk/state.ts` |
 | Roles and permissions | Dashboard › Roles, Users | `src/server/permissions.ts` |
 | Background jobs | the platform's scheduler | `background.json`, `src/server/background.ts` |
@@ -90,7 +126,9 @@ browser.
 window, which says "Our assistant is resting", shows the help-center articles that match their
 question, and offers "Talk to a person". The Assistant screen shows a warning until the key is
 added. Hand-off, the Inbox and My support all work without the key; tickets just have no AI
-summary.
+summary. The weekly Knowledge health check runs without the key (it makes no AI calls), but no
+drafts are written (solved tickets get none, and "Write a draft" asks for the key), and Test Lab
+can't run.
 
 ### The monthly spending cap
 
@@ -98,11 +136,13 @@ Dashboard › Assistant › Spending: a cap in US dollars per calendar month (UT
 **$20**. `0` turns the assistant off. The same screen shows this month's spend and number of AI
 answers.
 
-- Every AI call (chat answers and ticket summaries) is counted against the cap before it runs.
-  Once the month's spend reaches the cap, the assistant behaves as if it were off until the next
-  month or until you raise the cap.
-- There are also per-minute limits per visitor and for the whole site, so a burst of questions
-  can't spend the month in an hour.
+- Every AI call (chat answers, ticket summaries, article drafts and Test Lab runs) is counted
+  against the same cap before it runs. Once the month's spend reaches the cap, the assistant
+  behaves as if it were off until the next month or until you raise the cap; drafts stop, and a
+  Test Lab run stops with "Skipped: monthly AI limit reached".
+- There are also per-minute limits, so a burst can't spend the month in an hour: per visitor and
+  for the whole site for chat answers; 10 drafts a minute for the whole site (solved-ticket drafts
+  and "Write a draft" together); 3 Test Lab batches a minute (30 questions).
 - The cap limits what this site sends. Set a limit in your Anthropic account too.
 
 ### The models
@@ -144,18 +184,36 @@ below it, the customer is handed to a person.
 - **Search is Postgres full-text search**, matching words, not meaning (no vector embeddings). A
   question in another language than your articles finds nothing; write articles in the language
   your customers use.
+- **Knowledge health groups questions by their words**, like search: two questions that mean the
+  same in different words are two groups, and a question asked only once in the week isn't
+  reported. Drafts are written in English, and every fact the conversation didn't give is left
+  as an `[Add: …]` placeholder for you to fill in.
+- **Test Lab holds up to 500 questions**, and they can't be changed while a run is going; one run
+  at a time.
 - **Signing in is needed to talk to a person**, so a ticket always has an account to answer.
 - **A solved ticket takes replies for 14 days**, then it is closed. Customers can send 30 messages
   (hand-offs and replies) an hour.
 
 ## Privacy
 
-- **No personal data goes to the AI provider.** It gets the fixed instructions, the matching
-  help-center text and the customer's own words in this chat: never a name, account, email address,
-  IP address or cookie. Ticket summaries get only the customer's and the assistant's chat lines,
+- **The AI provider gets as little as it needs.** It gets the fixed instructions, the matching
+  help-center text and the customer's own words in this chat: never the customer's account, the name
+  or email address on it, an IP address or a cookie. Whatever else a customer types (a street
+  address, for example) is sent as typed, apart from the masking below. Ticket summaries get only the customer's and the assistant's chat lines,
   never internal notes or agent replies.
 - **Emails, phone numbers and card numbers a customer types are masked** before they go to the AI,
   into the question log, or into a ticket's chat transcript.
+- **Article drafts** send the model fixed instructions and: for a solved ticket, the customer's
+  and the agents' replies in it (never internal notes) and the article the assistant cited; for
+  "Write a draft", the issue's sample questions, its article and matching help-center text.
+  Emails, phone numbers and card numbers are masked; the names of the ticket's customer and
+  agents are replaced with `[name]` (the names themselves are never sent); links in what
+  customers and visitors typed become `[link]`. Never an account, email address, ticket number
+  or page path. What comes back is masked again, and keeps only links to this site or links that
+  were already in the help-center text it was given.
+- **Test Lab** sends the model what a customer's question would: the fixed instructions, the
+  matching help-center text and the test question (masked the same way). Its questions and
+  answers are kept only on the Test Lab screen, never in the question log.
 - **The question log is anonymous**: the question (masked), its outcome, the best article, the
   cost, the page path and the browser's language, with no account, name, email or IP. Only people allowed to see reports read it (Analytics).
 - **A deleted customer's tickets are kept, anonymised**: the link to the account is removed and
@@ -174,6 +232,8 @@ below it, the customer is handed to a person.
 | Quick replies (up to 6 buttons in the chat) | Dashboard › Assistant › Chat button |
 | Human-only topics (words that always go to a person, up to 30) | Dashboard › Assistant › Hand-off |
 | Help center title and intro | Dashboard › Assistant › Help center |
+| Time zone of the weekly Knowledge health check (Mondays 07:30) | Dashboard › Assistant › Weekly check |
+| Test questions and what each expects | Dashboard › Test Lab |
 | Articles, categories, snippets | Dashboard › Knowledge base |
 | Saved replies (`{{customer.firstName}}` and `{{agent.firstName}}` are filled in) | Dashboard › Saved replies |
 | Who can do what | Dashboard › Roles, then give people roles in Users |
@@ -185,8 +245,8 @@ below it, the customer is handed to a person.
 | --- | --- | --- |
 | `site:kb:edit` | write, publish, archive and import articles, categories and snippets | Admin, Support agent |
 | `site:helpdesk:inbox` | see and answer tickets, notes, assign, change status and priority, saved replies | Admin, Support agent |
-| `site:helpdesk:settings` | the Assistant screen | Admin |
-| `site:helpdesk:reports` | Analytics | Admin |
+| `site:helpdesk:settings` | the Assistant screen and Test Lab | Admin |
+| `site:helpdesk:reports` | Analytics and Knowledge health (see issues, Dismiss, Write a draft); Accept also needs `site:kb:edit` | Admin |
 | `site:helpdesk:delete` | delete a ticket and its conversation | Admin |
 
 The **Support agent** role (Inbox and knowledge base, no settings, reports or deletes) is created
@@ -210,20 +270,31 @@ member: they can use the chat and My support only. Permissions are declared once
 
 `prisma/seed.sql` fills an empty help desk with **Northwind Coffee Co.**, a made-up coffee
 roaster: 5 categories, articles (published, drafts and one archived), 10 snippets, the search index
-for them, 15 sample questions for Analytics, 3 saved replies, and the assistant named "Bean". No
-users, conversations or tickets. It stops without changing anything if the help desk is already in
+for them, 15 sample questions for Analytics, 3 saved replies, and the assistant named "Bean". Also
+**3 open Knowledge health issues** (two gaps with a draft ready to review: a new article on
+visiting the roastery, and an added section on a leaking espresso machine for "Descaling your
+espresso machine or kettle"; and one stale article, "Using a discount or gift code") and **8 Test Lab questions**, never run: 6 expect an answer (2 of them
+with no expected article; "Do you sell matcha?" is a known gap, so it fails) and 2 expect a
+hand-off (a refund, and asking for a real person). No users, conversations or tickets. It stops without changing anything if the help desk is already in
 use, and it is safe to run twice. Never load it into your live database.
 
 ## Background jobs
 
 Declared in `background.json`, handled in `src/server/background.ts`:
 
-| Job | When | What |
+9 job lists and 4 schedules. `npm run platform -- jobs` checks that every list has a handler.
+
+| Job (list) | When | What |
 | --- | --- | --- |
 | `ticket-summaries` | when a ticket is created and its summary couldn't be written at once | writes the AI summary (retried) |
-| `ticket-summaries-sweep` | every 15 minutes | summarises tickets left without a summary (a job that was never sent) |
-| `helpdesk-counters` | daily, 04:00 | recounts the Overview tiles, prunes old counters and "who's viewing" rows |
-| `rate-windows-cleanup` | hourly | deletes old rate-limit counters |
+| `ticket-summaries-sweep` | every 15 minutes (schedule) | summarises tickets left without a summary (a job that was never sent) |
+| `helpdesk-counters` | daily, 04:00 (schedule) | recounts the Overview tiles, prunes old counters and "who's viewing" rows |
+| `rate-windows-cleanup` | hourly (schedule) | deletes old rate-limit counters |
+| `knowledge-health-tick` | every 30 minutes (the `knowledge-health` schedule) | starts the weekly check once a week, as soon as it is Monday 07:30 in your time zone (a missed Monday still runs later that week); marks stalled checks, drafts and Test Lab runs failed; sends article drafts for solved tickets whose job never went out (15 minutes to 48 hours after the solve); deletes weekly-check records older than 26 weeks. Not retried: the next tick comes in 30 minutes. |
+| `knowledge-health` | sent by the tick, once a week | the weekly check: gaps, stale and low-rated articles. No AI calls. A big knowledge base goes on in a next job. |
+| `article-drafts` | sent when a ticket is solved (and by the tick) | the AI draft from one solved ticket, filed in Knowledge health (one per ticket) |
+| `health-drafts` | sent by "Write a draft" | the AI draft for one Knowledge health issue |
+| `test-lab` | sent by "Run all" | asks 10 test questions (4 at a time), saves the results, then sends the next 10 until the run is done |
 
 ## For your AI
 
@@ -232,11 +303,16 @@ Declared in `background.json`, handled in `src/server/background.ts`:
 - Read `docs/design-system.md` before any change to a page, screen or style: the help center, chat
   and dashboard share one set of tokens and components (`src/portal/ui/`).
 - The tests describe how it must behave: `tests/` (unit: hand-off, ticket rules, reports, AI prompt
-  and provider, permissions, design tokens) and `tests/integration/` (the real API on Postgres: kb,
-  helpdesk, support, inbox, reports, summaries). Run `npm test`, and the integration tests as in
-  [Tests](#tests).
+  and provider, AI drafts `ai-draft`, the Knowledge health tick `knowledge-tick`, Test Lab import
+  and score `test-lab-import` / `test-lab-score`, the weekly time zone `time-zone`, permissions,
+  design tokens) and `tests/integration/` (the real API on Postgres: kb, helpdesk, support, inbox,
+  reports, summaries, `article-drafts`, `knowledge-health-routes`, `knowledge-health-run`,
+  `test-lab`). Run `npm test`, and the integration tests as in [Tests](#tests).
 - Money and status changes are decided by the database in one statement (`src/server/ai/usage.ts`,
-  `src/server/helpdesk/state.ts`): keep it that way.
+  `src/server/ai/spend.ts`, `src/server/helpdesk/state.ts`): keep it that way. New AI calls go
+  through `spend.ts`, so they count against the same monthly cap.
+- Nothing AI-written is ever published by the code: Knowledge health's Accept writes a **draft**
+  article only (`src/server/knowledge/accept.ts`). Keep it that way.
 - Never edit the template's own files (see [Building on it](#building-on-it)).
 
 ---
@@ -375,7 +451,7 @@ dashboard. On your computer nobody can press that, so you make a local admin:
    npm run dev-admin -- you@example.com
    ```
 4. Open (or reload) http://localhost:4321/dashboard/: the knowledge base, Inbox, Assistant,
-   Analytics, Users, Roles and Activity are there.
+   Test Lab, Analytics, Knowledge health, Users, Roles and Activity are there.
 
 To try the customer side, sign up a second account in a private window: it gets the chat hand-off
 and My support only.
@@ -421,12 +497,19 @@ src/
   layouts/Base.astro     public page frame; mounts the chat window
   portal/                the dashboard (React): routes.tsx, screens/, ui/ (the UI kit)
   server/routes/         the API: kb, kb-manage, helpdesk, helpdesk-settings, support, inbox,
-                         canned, helpdesk-reports
-  server/ai/             the assistant: retrieve, prompt, provider, answer, usage (the cap)
+                         canned, helpdesk-reports, knowledge-health, test-lab
+  server/ai/             the assistant: retrieve, prompt, provider, answer, usage (the cap),
+                         draft (article drafts: input, masking, checks), spend (the cap for
+                         drafts and Test Lab)
+  server/knowledge/      Knowledge health and Test Lab jobs: tick (weekly start, clean-up),
+                         health (the weekly check), drafts, accept, test-lab (the runs)
   server/helpdesk/       ticket status changes and counters (state.ts), AI summaries (summary.ts)
-  server/kb/             search, chunks, Markdown rendering, cached settings
+  server/kb/             search, chunks, Markdown rendering, cached settings, articles (the
+                         article write path)
+  server/background.ts   one handler per job list in background.json
   server/permissions.ts  every permission
-  lib/                   shared types and browser code (the widget, hand-off, models, import)
+  lib/                   shared types and browser code (the widget, hand-off, models, import,
+                         knowledge-health-types, test-lab, time-zone)
   styles/                global.css (tokens), app.css (dashboard), inbox.css, support.css
   platform/              the template's managed core (auth, guards, platform calls): never edit
 ```
@@ -517,7 +600,7 @@ The first merge lists every file that differs from that release: keep your side 
 | --- | --- | --- |
 | the chat says "Our assistant is resting" | no `ANTHROPIC_API_KEY`, the cap is 0, or this month's cap is used up | add the key (owner secret, or `.env` and restart locally); check Dashboard › Assistant › Spending |
 | the assistant never answers, always "couldn't find this" | nothing published matches the words of the question | publish articles or snippets in the customers' words; on a fresh database, `npm run db:seed` |
-| no Inbox, Assistant or Analytics in the dashboard | your account lacks the permission | an admin gives you the role (Support agent or Admin) in Users |
+| no Inbox, Assistant, Test Lab, Analytics or Knowledge health in the dashboard | your account lacks the permission | an admin gives you the role (Support agent or Admin) in Users |
 | `npm install` warns `EBADENGINE`, or `npm run setup` says Node.js is too old | Node.js below 22.12 | `nvm install 22`, then `nvm use 22` (or install 22.12+), then `npm install` again |
 | `docker compose up` says `Bind for 0.0.0.0:5432 failed: port is already allocated` | another Postgres already uses port 5432 | put `DB_PORT=5433` in `.env` (and `:5433` in `DATABASE_URL` if it is already set), then `docker compose up -d --wait db` and `npm run setup` |
 | `npm run setup` says `no database answers at localhost:5432` (or `ECONNREFUSED`) | the database isn't running, or Docker isn't | start Docker, then `docker compose up -d --wait db`, then `npm run setup` |

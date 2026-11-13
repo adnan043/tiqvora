@@ -8,8 +8,6 @@ import {
   type ArticleStatus,
   KB_LIMITS,
   type KbImportResult,
-  type KbManageArticle,
-  type KbManageArticleRow,
   type KbManageArticlesPage,
   type KbManageCategory,
   type KbSnippet,
@@ -17,11 +15,31 @@ import {
   SLUG_RE,
   slugify,
 } from '../../lib/kb-types';
-import {markdownToText} from '../../lib/markdown';
 import {audit} from '../../platform/auth';
 import {cache} from '../../platform/cache';
 import {problem, requireAuth, requirePermission, withDb, withViewer} from '../../platform/guards';
-import {chunkArticle, chunkSnippet, cut} from '../kb/chunks';
+import {
+  type ArticleFields,
+  articleRowSelect,
+  articleSelect,
+  articleSlugsLike,
+  BODY_MESSAGE,
+  BODY_TOO_BIG_MESSAGE,
+  bodyTooBig,
+  excerptOf,
+  type Fields,
+  freeSlug,
+  given,
+  idOf,
+  insertArticle,
+  newArticleSlug,
+  randomSlug,
+  readArticle,
+  str,
+  toArticle,
+  toArticleRow,
+} from '../kb/articles';
+import {chunkArticle, chunkSnippet} from '../kb/chunks';
 import {KB_CACHE_PREFIX} from '../kb/keys';
 import {renderArticleHtml} from '../kb/render';
 import {PERMISSIONS} from '../permissions';
@@ -68,13 +86,6 @@ const RESERVED_CATEGORY_SLUGS = new Set(['articles', 'search']);
 /** A name from ICON_NAMES (src/portal/ui/icon.tsx): checked by shape here, the dashboard picks from the list. */
 const ICON_RE = /^[a-z][a-z0-9-]{0,29}$/;
 
-type Fields = Record<string, string>;
-
-const idOf = (value: unknown): number | undefined => {
-  const n = typeof value === 'number' ? value : typeof value === 'string' && value.trim() ? Number(value) : NaN;
-  return Number.isSafeInteger(n) && n > 0 ? n : undefined;
-};
-
 const codeOf = (error: unknown) => (error as {code?: unknown} | null)?.code;
 
 const invalid = (c: Context, fields: Fields) =>
@@ -91,31 +102,6 @@ const changedMeanwhile = (c: Context) =>
 /** Clears every public knowledge-base read (home, categories, articles, sitemap). Never throws. */
 const clearPublicCache = () => cache.delPrefix(KB_CACHE_PREFIX).catch(() => false);
 
-/** `slug`, else `slug-2`, `slug-3`… not in `used` (added to it), at most `max` long. */
-function freeSlug(base: string, used: Set<string>, max: number): string {
-  let slug = base.slice(0, max);
-  for (let n = 2; used.has(slug); n++) {
-    const suffix = `-${n}`;
-    slug = `${base.slice(0, max - suffix.length).replace(/-+$/, '')}${suffix}`;
-  }
-  used.add(slug);
-  return slug;
-}
-
-/** A random fallback when a free slug was taken meanwhile. */
-const randomSlug = (base: string, max: number) => `${base.slice(0, max - 9).replace(/-+$/, '')}-${crypto.randomUUID().slice(0, 8)}`;
-
-/** Slugs in use that a candidate from `bases` could collide with (`base`, `base-…`). One read. */
-async function articleSlugsLike(db: PrismaClient, bases: string[]): Promise<Set<string>> {
-  if (!bases.length) return new Set();
-  const rows = await db.kbArticle.findMany({
-    select: {slug: true},
-    where: {OR: bases.flatMap(base => [{slug: base}, {slug: {startsWith: `${base}-`}}])},
-    take: 1000,
-  });
-  return new Set(rows.map(row => row.slug));
-}
-
 async function categorySlugsLike(db: PrismaClient, base: string): Promise<Set<string>> {
   const rows = await db.kbCategory.findMany({
     select: {slug: true},
@@ -125,80 +111,9 @@ async function categorySlugsLike(db: PrismaClient, base: string): Promise<Set<st
   return new Set([...rows.map(row => row.slug), ...RESERVED_CATEGORY_SLUGS]);
 }
 
-/** A plain-text excerpt (≤ 200 characters) for an article saved without one. */
-/** The summary under a title when the editor wrote none: the first plain paragraph, so headings
- * and list items never run together ("Why it happens A noisy grinder…"). */
-const NOT_A_PARAGRAPH = /^\s{0,3}(?:#|[-*+]\s|\d+[.)]\s|>|\||```|~~~)/;
-function excerptOf(body: string): string {
-  const blocks = body.replace(/\r\n?/g, '\n').split(/\n[ \t]*\n/);
-  const paragraph = blocks.find(block => block.trim() && !NOT_A_PARAGRAPH.test(block));
-  const text = markdownToText(paragraph ?? body).replace(/\s+/g, ' ').trim();
-  if (text.length <= 200) return text;
-  const at = text.lastIndexOf(' ', 199);
-  return `${cut(text, at > 100 ? at : 199).trimEnd()}…`;
-}
-
-const str = (value: unknown) => (typeof value === 'string' ? value : '');
-const given = (v: Record<string, unknown>, key: string) => v[key] !== undefined && v[key] !== null;
 const objectOf = (value: unknown) => (value && typeof value === 'object' && !Array.isArray(value) ? value : {}) as Record<string, unknown>;
 
 // ------------------------------------------------------------------ articles --
-
-type ArticleFields = {
-  title?: string;
-  slug?: string;
-  categoryId?: number;
-  body?: string;
-  excerpt?: string;
-  status?: ArticleStatus;
-};
-
-const BODY_MESSAGE = `Write the article: 1 to ${KB_LIMITS.articleBody.toLocaleString('en-US')} characters.`;
-const BODY_TOO_BIG_MESSAGE = 'This article is too long. Split it into two articles.';
-const utf8 = new TextEncoder();
-/** Over KB_LIMITS.articleBodyBytes in UTF-8: a body near 50,000 characters of non-Latin text would
- * otherwise pass the character check and still break the Site API's 64 KB request limit. */
-const bodyTooBig = (body: string) =>
-  body.length * 3 > KB_LIMITS.articleBodyBytes && utf8.encode(body).length > KB_LIMITS.articleBodyBytes;
-
-/** Checks an article's fields; `partial` (PATCH) checks only the ones sent. */
-function readArticle(v: Record<string, unknown>, partial: boolean): {out: ArticleFields; fields: Fields} {
-  const out: ArticleFields = {};
-  const fields: Fields = {};
-  if (given(v, 'title') || !partial) {
-    const title = str(v.title).trim();
-    if (!title || title.length > KB_LIMITS.articleTitle) fields.title = `A title needs 1 to ${KB_LIMITS.articleTitle} characters.`;
-    else out.title = title;
-  }
-  if (given(v, 'slug')) {
-    const slug = str(v.slug).trim().toLowerCase();
-    if (slug && (slug.length > KB_LIMITS.articleSlug || !SLUG_RE.test(slug))) {
-      fields.slug = `Use lower-case letters, digits and single dashes (up to ${KB_LIMITS.articleSlug}).`;
-    } else if (slug) out.slug = slug;
-  }
-  if (given(v, 'categoryId') || !partial) {
-    const categoryId = idOf(v.categoryId);
-    if (!categoryId) fields.categoryId = 'Pick a category.';
-    else out.categoryId = categoryId;
-  }
-  if (given(v, 'body') || !partial) {
-    const body = str(v.body).replace(/\r\n?/g, '\n');
-    if (!body.trim() || body.length > KB_LIMITS.articleBody) fields.body = BODY_MESSAGE;
-    else if (bodyTooBig(body)) fields.body = BODY_TOO_BIG_MESSAGE;
-    else out.body = body;
-  }
-  if (given(v, 'excerpt')) {
-    const excerpt = typeof v.excerpt === 'string' ? v.excerpt.replace(/\s+/g, ' ').trim() : null;
-    if (excerpt === null || excerpt.length > KB_LIMITS.articleExcerpt) {
-      fields.excerpt = `An excerpt is up to ${KB_LIMITS.articleExcerpt} characters.`;
-    } else out.excerpt = excerpt;
-  }
-  if (given(v, 'status')) {
-    if (!(ARTICLE_STATUSES as readonly unknown[]).includes(v.status)) fields.status = 'Pick draft, published or archived.';
-    else out.status = v.status as ArticleStatus;
-  }
-  return {out, fields};
-}
 
 const articleBody = (partial: boolean) =>
   validator('json', (value, c) => {
@@ -213,52 +128,6 @@ const articlesQuery = validator('query', value => ({
   q: typeof value.q === 'string' ? value.q.trim().slice(0, 80) : '',
   before: typeof value.before === 'string' ? value.before : '',
 }));
-
-const articleRowSelect = {
-  id: true,
-  title: true,
-  slug: true,
-  status: true,
-  helpfulCount: true,
-  notHelpfulCount: true,
-  viewCount: true,
-  updatedAt: true,
-  lastReviewedAt: true,
-  category: {select: {id: true, name: true}},
-} as const;
-const articleSelect = {...articleRowSelect, body: true, excerpt: true} as const;
-
-type ArticleRowData = {
-  id: number;
-  title: string;
-  slug: string;
-  status: string;
-  helpfulCount: number;
-  notHelpfulCount: number;
-  viewCount: number;
-  updatedAt: Date;
-  lastReviewedAt: Date;
-  category: {id: number; name: string};
-};
-
-const toArticleRow = (row: ArticleRowData): KbManageArticleRow => ({
-  id: row.id,
-  title: row.title,
-  slug: row.slug,
-  status: row.status as ArticleStatus,
-  category: {id: row.category.id, name: row.category.name},
-  helpfulCount: row.helpfulCount,
-  notHelpfulCount: row.notHelpfulCount,
-  viewCount: row.viewCount,
-  updatedAt: row.updatedAt.toISOString(),
-  lastReviewedAt: row.lastReviewedAt.toISOString(),
-});
-
-const toArticle = (row: ArticleRowData & {body: string; excerpt: string}): KbManageArticle => ({
-  ...toArticleRow(row),
-  body: row.body,
-  excerpt: row.excerpt,
-});
 
 /** The audit action for a status change `from` → `to`, when that is worth recording. */
 const statusAction = (from: string, to: string) =>
@@ -420,36 +289,12 @@ export const kbManageRoutes = new Hono()
     const me = c.var.viewer.id!;
     const status: ArticleStatus = input.status ?? 'draft';
     const published = status === 'published';
-    const max = KB_LIMITS.articleSlug;
-    const base = slugify(input.title, max) || 'article';
     const explicit = Boolean(input.slug);
-    const slug = input.slug ?? freeSlug(base, await articleSlugsLike(db, [base]), max);
-    const now = new Date();
-    const chunks = published ? chunkArticle(input.title, input.body) : [];
+    const {slug, base} = input.slug ? {slug: input.slug, base: ''} : await newArticleSlug(db, input.title);
+    const fields = {title: input.title, body: input.body, categoryId: input.categoryId, excerpt: input.excerpt, status};
 
-    const save = (slugToUse: string) =>
-      db.$transaction(async tx => {
-        const row = await tx.kbArticle.create({
-          data: {
-            categoryId: input.categoryId,
-            title: input.title,
-            slug: slugToUse,
-            body: input.body,
-            excerpt: input.excerpt || excerptOf(input.body),
-            status,
-            publishedAt: published ? now : null,
-            lastReviewedAt: now,
-            createdBy: me,
-            updatedBy: me,
-            chunks: chunks.length ? {createMany: {data: chunks}} : undefined,
-          },
-          select: articleSelect,
-        });
-        if (published) {
-          await tx.kbCategory.update({where: {id: input.categoryId}, data: {articleCount: {increment: 1}}, select: {id: true}});
-        }
-        return row;
-      });
+    // The row, its chunks and the category count in one transaction (src/server/kb/articles.ts).
+    const save = (slugToUse: string) => db.$transaction(tx => insertArticle(tx, fields, me, slugToUse));
 
     let row;
     try {
@@ -458,7 +303,7 @@ export const kbManageRoutes = new Hono()
       } catch (error) {
         // An auto-made slug taken meanwhile: one more try with a random tail (a P2002 wrote nothing).
         if (codeOf(error) !== 'P2002' || explicit) throw error;
-        row = await save(randomSlug(base, max));
+        row = await save(randomSlug(base));
       }
     } catch (error) {
       const code = codeOf(error);

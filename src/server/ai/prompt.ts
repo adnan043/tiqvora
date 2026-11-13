@@ -22,6 +22,11 @@ export interface Source {
   text: string;
   /** `/help/articles/<slug>/`, or '' for a snippet (never cited as a link). */
   url: string;
+  /**
+   * The article's id (`kb_chunks.article_id`), or null for a snippet. Server-only: never shown
+   * to the model (the prompt text is unchanged) and never sent to the browser.
+   */
+  articleId: number | null;
 }
 
 export interface PromptHistoryItem {
@@ -61,17 +66,17 @@ const TONE_LINES: Record<string, string> = {
  * Escapes text placed inside an XML-like wrapper, so it can't close or open a tag. Only `<` and
  * `>`: `&` stays as typed, so the model never sees (and copies) `&amp;` into an answer.
  */
-function escapeText(text: string): string {
+export function escapeText(text: string): string {
   return text.replace(/</g, '&lt;').replace(/>/g, '&gt;');
 }
 
 /** An attribute value: also `"`, so it can't end the attribute. */
-function escapeAttr(text: string): string {
+export function escapeAttr(text: string): string {
   return escapeText(text).replace(/"/g, '&quot;');
 }
 
 /** One line of plain text: no control characters or line breaks (owner-set names, titles). */
-function oneLine(text: string, max: number): string {
+export function oneLine(text: string, max: number): string {
   return text
     .replace(/[\u0000-\u001f\u007f\u2028\u2029]+/g, ' ')
     .replace(/\s+/g, ' ')

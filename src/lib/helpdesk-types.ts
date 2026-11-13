@@ -94,6 +94,8 @@ export interface HelpdeskSettingsAdmin {
   businessHours: string;
   helpTitle: string;
   helpIntro: string;
+  /** IANA zone of the weekly Knowledge health check (Mondays 07:30 local); canonical name. */
+  timeZone: string;
   quickReplies: string[];
   humanTopics: string[];
   /** Whether each provider's owner secret is set: booleans only, never the key. */

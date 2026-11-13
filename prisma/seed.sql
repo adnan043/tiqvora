@@ -6,7 +6,7 @@
 -- A help center for "Northwind Coffee Co.", a fictional coffee roaster: categories, articles
 -- (published, drafts, one archived), snippets, and the search chunks of every published article
 -- and snippet, so search and the help center work straight after loading, plus agents' saved
--- replies. No conversations or tickets: they belong to users, and a seed has none. Ids come from
+-- replies, three open Knowledge health issues and eight Test Lab questions. No conversations or tickets: they belong to users, and a seed has none. Ids come from
 -- subselects on the unique slugs, never hard-coded.
 BEGIN;
 
@@ -18,6 +18,10 @@ BEGIN
      OR EXISTS (SELECT 1 FROM "kb_snippets" WHERE "question" NOT IN ('What are your customer support hours?', 'Do you sell decaf coffee?', 'Are your coffee bags recyclable or compostable?', 'How do I read the roast date on the bag?', 'What is the minimum order for free shipping?', 'Do you sell gift cards?', 'How much caffeine is in a cup of your coffee?', 'Can I pick up my order from the roastery?', 'Which payment methods do you accept?', 'Is your coffee organic and fairly traded?'))
      OR EXISTS (SELECT 1 FROM "question_logs" WHERE "question" NOT IN ('How do I change the grind in my subscription?', 'How long does shipping take to Canada?', 'Do you sell decaf pods?', 'My grinder stopped working, what should I check?', 'I want a refund for my last bag, it tasted stale', 'Can I skip next month’s delivery?', 'Do you offer barista training classes?', 'What ratio should I use for a French press?', 'My espresso machine leaks water from the bottom', '¿Cómo puedo rastrear mi pedido?', 'Can I book a cupping session at the roastery?', 'How do I update my card?', 'Can I talk to a real person?', 'Do you sell matcha or loose-leaf tea?', 'How do I make cold brew at home?'))
      OR EXISTS (SELECT 1 FROM "helpdesk_canned_replies" WHERE "title" NOT IN ('Order delayed: we are checking with the carrier', 'Refund issued', 'Grind size tips for a sour or bitter cup'))
+     OR EXISTS (SELECT 1 FROM "health_issues" WHERE "fingerprint" NOT IN ('seed:roastery-visits',
+          COALESCE((SELECT md5('a:' || "id") FROM "kb_articles" WHERE "slug" = 'descaling-your-espresso-machine'), ''),
+          COALESCE((SELECT 'article:' || "id" FROM "kb_articles" WHERE "slug" = 'apply-a-discount-code'), '')))
+     OR EXISTS (SELECT 1 FROM "test_cases" WHERE "question_key" NOT IN ('how do i change the grind in my subscription', 'do you ship to canada', 'how do i cancel my subscription', 'my espresso tastes sour', 'what are your support hours', 'do you sell matcha', 'can i get a refund for my last order', 'can i talk to a real person'))
      OR EXISTS (SELECT 1 FROM "conversations")
      OR EXISTS (SELECT 1 FROM "tickets") THEN
     RAISE EXCEPTION 'prisma/seed.sql is sample data and this help desk is already in use. Nothing was changed.';
@@ -625,7 +629,7 @@ Gift card codes can be combined with a discount code and used over several order
 - **Typo**: codes aren''t case sensitive, but watch for 0 and O.
 
 Still stuck? Contact us with the code and a screenshot of the message at checkout.',
-   'published', now() - interval '80 days', now() - interval '80 days', 702, 70, 15),
+   'published', now() - interval '200 days', now() - interval '200 days', 702, 70, 15),
   ('orders-shipping', 'holiday-shipping-cutoffs', 'Holiday shipping cut-off dates', 'Last order dates for delivery before the holidays.',
    'To arrive before the holidays, place your order by these dates.
 
@@ -1173,5 +1177,89 @@ WHERE NOT EXISTS (SELECT 1 FROM "helpdesk_canned_replies" c WHERE c."title" = v.
 -- Ticket tile counters (the migration creates them too; kept when present).
 INSERT INTO "helpdesk_counters" ("name", "value") VALUES ('unsolved', 0), ('waiting_on_us', 0)
 ON CONFLICT ("name") DO NOTHING;
+
+-- Knowledge health: three open issues, as the weekly check and the draft job would write them.
+-- Drafts never invent facts: every fact a person must supply is an [Add: …] placeholder.
+-- No unique key on open rows that a plain ON CONFLICT can name: WHERE NOT EXISTS on the fingerprint.
+INSERT INTO "health_issues" ("type", "article_id", "fingerprint", "week", "evidence", "suggested_title", "suggested_body",
+  "draft_state", "updated_at")
+SELECT 'gap', NULL, 'seed:roastery-visits', date_trunc('week', now())::date,
+  '{"source":"weekly","questions":2,"noSource":2,"lowConfidence":0,"samples":["Do you offer barista training classes?","Can I book a cupping session at the roastery?"]}'::jsonb,
+  'Visiting the roastery: cuppings and classes',
+  'You can visit our roastery for a guided cupping or a hands-on barista class.
+
+## Cuppings
+
+- **When**: [Add: days and times of public cuppings]
+- **How long**: [Add: length of a session]
+- **Price**: [Add: price per person, or "free"]
+
+## Barista classes
+
+- **What you learn**: [Add: what the class covers, for example espresso, milk steaming, latte art]
+- **Group size**: [Add: maximum people per class]
+- **Price**: [Add: price per person]
+
+## Booking
+
+Book at [Add: booking link or how to book]. [Add: cancellation or rescheduling rules]
+
+## Finding us
+
+[Add: the roastery''s address, parking and accessibility notes]',
+  'ready', now()
+WHERE NOT EXISTS (SELECT 1 FROM "health_issues" h WHERE h."fingerprint" = 'seed:roastery-visits');
+
+INSERT INTO "health_issues" ("type", "article_id", "fingerprint", "week", "evidence", "suggested_title", "suggested_body",
+  "draft_state", "updated_at")
+SELECT 'gap', a."id", md5('a:' || a."id"), date_trunc('week', now())::date,
+  '{"source":"weekly","questions":1,"noSource":0,"lowConfidence":1,"samples":["My espresso machine leaks water from the bottom"]}'::jsonb,
+  a."title",
+  a."body" || '
+
+## Water under the machine
+
+Water under an espresso machine usually comes from one of a few places. Check them in this order:
+
+1. **The drip tray**: [Add: how to check that the drip tray is seated and not full]
+2. **The water tank**: [Add: how to check the tank''s seal or valve for cracks]
+3. **The group head gasket**: [Add: signs of a worn gasket and how often to replace it]
+
+If it still leaks, [Add: what the customer should do next, for example contact support with the model and a photo, or the warranty steps]',
+  'ready', now()
+FROM "kb_articles" a
+WHERE a."slug" = 'descaling-your-espresso-machine'
+  AND NOT EXISTS (SELECT 1 FROM "health_issues" h WHERE h."fingerprint" = md5('a:' || a."id"));
+
+INSERT INTO "health_issues" ("type", "article_id", "fingerprint", "week", "evidence", "suggested_title", "draft_state", "updated_at")
+SELECT 'stale', a."id", 'article:' || a."id", date_trunc('week', now())::date,
+  jsonb_build_object(
+    'lastReviewedAt', to_char(a."last_reviewed_at" AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"'),
+    'daysSinceReview', (now()::date - (a."last_reviewed_at" AT TIME ZONE 'UTC')::date),
+    'views', a."view_count"),
+  a."title", 'none', now()
+FROM "kb_articles" a
+WHERE a."slug" = 'apply-a-discount-code'
+  AND NOT EXISTS (SELECT 1 FROM "health_issues" h WHERE h."fingerprint" = 'article:' || a."id");
+
+-- Test Lab: questions the owner tests the assistant with, never run yet. created_by 0: no user.
+-- question_key = normalizeQuestion(question) (src/lib/test-lab.ts). Two expect a hand-off
+-- ('refund' is a hand-off topic; asking for a person always hands off), two have no expected
+-- article (a snippet answers support hours; matcha is a known gap, so that test fails).
+INSERT INTO "test_cases" ("question", "question_key", "expect", "expected_article_id", "created_by", "updated_at")
+SELECT v."question", v."key", v."expect", a."id", 0, now()
+FROM (VALUES
+  (1, 'How do I change the grind in my subscription?', 'how do i change the grind in my subscription', 'answer', 'change-coffee-or-grind-in-subscription'),
+  (2, 'Do you ship to Canada?', 'do you ship to canada', 'answer', 'international-shipping'),
+  (3, 'How do I cancel my subscription?', 'how do i cancel my subscription', 'answer', 'cancel-your-subscription'),
+  (4, 'My espresso tastes sour', 'my espresso tastes sour', 'answer', 'espresso-dial-in-basics'),
+  (5, 'What are your support hours?', 'what are your support hours', 'answer', NULL),
+  (6, 'Do you sell matcha?', 'do you sell matcha', 'answer', NULL),
+  (7, 'Can I get a refund for my last order?', 'can i get a refund for my last order', 'handoff', NULL),
+  (8, 'Can I talk to a real person?', 'can i talk to a real person', 'handoff', NULL)
+) AS v("ord", "question", "key", "expect", "slug")
+LEFT JOIN "kb_articles" a ON a."slug" = v."slug"
+ORDER BY v."ord"
+ON CONFLICT ("question_key") DO NOTHING;
 
 COMMIT;

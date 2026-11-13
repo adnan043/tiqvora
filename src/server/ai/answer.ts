@@ -2,6 +2,7 @@ import {Prisma, type PrismaClient} from '../../generated/prisma/client';
 import {aiModelOf, costMicros, costMicrosFor} from '../../lib/ai-models';
 import type {AskCitation, AskResult, AskRole, Confidence} from '../../lib/helpdesk-types';
 import {monthKey, recordAiCost, reserveAiCall} from './usage';
+import {MICROS_PER_CENT} from './spend';
 import {takeRateWindow} from '../rate-window';
 import {callAnthropic} from './provider';
 import {buildPrompt, parseAnswer, type Source} from './prompt';
@@ -11,7 +12,7 @@ import type {Retrieved} from './retrieve';
  * One customer question → one answer, from the help center only (Phase 2 contract, steps 1–6):
  *   1. They ask for a person, or it's a human-only topic → `handoff` (no AI call).
  *   2. Nothing in the help center matches → `no_source` (no AI call).
- *   3. No key, cap 0, the per-minute AI limits, or the monthly cap → `off` (links only).
+ *   3. No key, cap 0, the per-minute AI limits (not in `mode: 'test'`), or the monthly cap → `off` (links only).
  *   4. The model answers from the numbered sources; any failure → `handoff` (fail closed).
  *   5. Below the owner's confidence threshold, or the model says a person is needed → `handoff`.
  *   6. Otherwise `answered`, citing articles only (a snippet has no page).
@@ -27,8 +28,6 @@ import type {Retrieved} from './retrieve';
 /** Per minute: one client's AI calls, and the whole site's (a ceiling on spend speed). */
 const AI_PER_CLIENT = 10;
 const AI_SITE_WIDE = 30;
-/** 1 cent = 10,000 micro-dollars. */
-const MICROS_PER_CENT = 10_000;
 /** The worst case for one call, held against the cap while it runs (usage.ts). */
 const HOLD_INPUT_TOKENS = 8000;
 /** = the provider's MAX_TOKENS (provider.ts): the reply can't be longer. */
@@ -66,6 +65,14 @@ export interface AnswerInput {
   page: string;
   /** `clientRateKey(c)`: the per-client AI limit; null → only the site-wide one. */
   clientKey: string | null;
+  /**
+   * `customer` (default): the chat. `test`: Test Lab (src/server/knowledge/test-lab.ts), which has
+   * its own per-minute window: ONLY the customer per-minute windows (step 3's `ai-ask` and the
+   * client's) are skipped. Masking, the person / human-topic rules, the reserve + hold and the
+   * threshold are the same, so the test is faithful. The caller writes no `question_logs` row; it
+   * settles the hold with `recordAiCost(db, log.costMicros, log.heldMicros, log.month)`.
+   */
+  mode?: 'customer' | 'test';
 }
 
 /** What `writeQuestionLog` stores (no user id, no IP: the table has neither). */
@@ -86,7 +93,15 @@ export interface QuestionLogEntry {
   month: string;
 }
 
-export type AnswerOutcome = Omit<AskResult, 'logId'> & {log: QuestionLogEntry};
+export type AnswerOutcome = Omit<AskResult, 'logId'> & {
+  log: QuestionLogEntry;
+  /**
+   * SERVER-ONLY: the ids of the articles the answer cites (the same sources as `citations`), [] when
+   * the model was not asked or failed. Non-enumerable, so a spread (`{log, ...result}`) or
+   * `JSON.stringify` never sends it to the browser.
+   */
+  citedArticleIds: number[];
+};
 
 /* ------------------------------ asking for a person ------------------------------ */
 
@@ -189,13 +204,30 @@ function articleLinks(sources: readonly Source[], max = MAX_LINKS): AskCitation[
   return out;
 }
 
-/** The model's `citations` numbers → article links; nothing usable → the top article. */
-function citedLinks(sources: readonly Source[], numbers: readonly number[]): AskCitation[] {
-  const cited = articleLinks(
-    numbers.map(n => sources[n - 1]).filter((s): s is Source => Boolean(s)),
-    MAX_LINKS
-  );
-  return cited.length ? cited : articleLinks(sources, 1);
+/** The model's `citations` numbers → the cited ARTICLE sources (deduped by URL, ≤ MAX_LINKS); nothing usable → the top article. */
+function citedSources(sources: readonly Source[], numbers: readonly number[]): Source[] {
+  const pick = (list: readonly (Source | undefined)[], max: number): Source[] => {
+    const seen = new Set<string>();
+    const out: Source[] = [];
+    for (const source of list) {
+      if (!source || !source.url || seen.has(source.url)) continue;
+      seen.add(source.url);
+      out.push(source);
+      if (out.length >= max) break;
+    }
+    return out;
+  };
+  const cited = pick(numbers.map(n => sources[n - 1]), MAX_LINKS);
+  return cited.length ? cited : pick(sources, 1);
+}
+
+/** The article ids of these sources (snippets have none), unique, in order. */
+function articleIdsOf(sources: readonly Source[]): number[] {
+  const ids: number[] = [];
+  for (const source of sources) {
+    if (typeof source.articleId === 'number' && !ids.includes(source.articleId)) ids.push(source.articleId);
+  }
+  return ids;
 }
 
 /* ------------------------------------ the AI ------------------------------------ */
@@ -254,11 +286,14 @@ export async function answerQuestion(input: AnswerInput): Promise<AnswerOutcome>
   };
   const done = (
     result: Omit<AskResult, 'logId'>,
-    log: Partial<QuestionLogEntry> & Pick<QuestionLogEntry, 'outcome' | 'topArticleId'>
-  ): AnswerOutcome => ({
-    ...result,
-    log: {...baseLog, confidence: result.confidence, ...log},
-  });
+    log: Partial<QuestionLogEntry> & Pick<QuestionLogEntry, 'outcome' | 'topArticleId'>,
+    citedArticleIds: number[] = []
+  ): AnswerOutcome => {
+    const outcome = {...result, log: {...baseLog, confidence: result.confidence, ...log}} as AnswerOutcome;
+    // Non-enumerable: server-only, never in the ask route's JSON (it spreads the rest).
+    Object.defineProperty(outcome, 'citedArticleIds', {value: citedArticleIds, enumerable: false});
+    return outcome;
+  };
 
   const {sources, topArticleId} = input.retrieved;
 
@@ -296,7 +331,8 @@ export async function answerQuestion(input: AnswerInput): Promise<AnswerOutcome>
     );
   const capMicros = Math.max(0, Math.floor(input.capCents)) * MICROS_PER_CENT;
   if (!input.key || capMicros <= 0) return off();
-  if (!(await takeAiWindows(db, input.clientKey))) return off();
+  // Test Lab has its own window (one per batch of 10): customers' slots are never taken.
+  if (input.mode !== 'test' && !(await takeAiWindows(db, input.clientKey))) return off();
   // Held against the cap while the call runs, so asks at once can't all pass it (usage.ts).
   const hold = costMicros(model, HOLD_INPUT_TOKENS, HOLD_OUTPUT_TOKENS);
   if (!(await reserveAiCall(db, capMicros, hold, month))) return off();
@@ -329,16 +365,18 @@ export async function answerQuestion(input: AnswerInput): Promise<AnswerOutcome>
   // 5–6. Confident enough, and no person needed → answered; else a hand-off that keeps the answer.
   const threshold = RANK[settings.confidenceThreshold] ?? RANK.medium;
   const handOff = parsed.needsHuman || RANK[parsed.confidence] < threshold;
+  const cited = citedSources(sources, parsed.citations);
   return done(
     {
       status: handOff ? 'handoff' : 'answered',
       answer: parsed.answer,
-      citations: citedLinks(sources, parsed.citations),
+      citations: cited.map(source => ({title: source.title, url: source.url})),
       confidence: parsed.confidence,
       offerHuman: handOff,
       followUps: handOff ? [] : parsed.followUps,
     },
-    {...aiLog, outcome: handOff ? 'handed_off' : 'answered', topArticleId}
+    {...aiLog, outcome: handOff ? 'handed_off' : 'answered', topArticleId},
+    articleIdsOf(cited)
   );
 }
 

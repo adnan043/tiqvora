@@ -159,7 +159,7 @@ export const db = createDb(DATABASE_URL || 'postgresql://unused@localhost/unused
 
 export async function resetDatabase() {
   await db.$executeRawUnsafe(
-    'TRUNCATE "pending_sign_ups", "users", "user_roles", "refresh_tokens", "password_resets", "email_verifications", "email_changes", "recovery_codes", "sign_in_codes", "login_attempts", "audit_events", "jobs", "job_deliveries", "kb_chunks", "kb_articles", "kb_categories", "kb_snippets", "helpdesk_quick_replies", "helpdesk_human_topics", "rate_windows", "question_logs", "ai_usage", "idempotency_keys", "conversations", "messages", "tickets", "ticket_views", "helpdesk_counters", "helpdesk_canned_replies", "question_stats_daily" RESTART IDENTITY CASCADE'
+    'TRUNCATE "pending_sign_ups", "users", "user_roles", "refresh_tokens", "password_resets", "email_verifications", "email_changes", "recovery_codes", "sign_in_codes", "login_attempts", "audit_events", "jobs", "job_deliveries", "kb_chunks", "kb_articles", "kb_categories", "kb_snippets", "helpdesk_quick_replies", "helpdesk_human_topics", "rate_windows", "question_logs", "ai_usage", "idempotency_keys", "conversations", "messages", "tickets", "ticket_views", "helpdesk_counters", "helpdesk_canned_replies", "question_stats_daily", "health_issues", "knowledge_health_runs", "test_cases", "test_runs" RESTART IDENTITY CASCADE'
   );
   // Ticket numbers start at #1001 (the migration's RESTART; TRUNCATE ... RESTART IDENTITY puts them back to 1).
   await db.$executeRawUnsafe('ALTER SEQUENCE "tickets_number_seq" RESTART WITH 1001');
@@ -469,6 +469,7 @@ export async function resetHelpdeskSettings(model = 'claude-opus-5-5', monthlyCa
     businessHours: '',
     helpTitle: 'How can we help?',
     helpIntro: 'Search our guides, or ask the assistant.',
+    timeZone: 'UTC',
     updatedBy: null,
   };
   await db.helpdeskSettings.upsert({where: {id: 1}, create: {id: 1, ...settings}, update: settings, select: {id: true}});

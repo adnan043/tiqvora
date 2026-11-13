@@ -908,6 +908,11 @@
 }
 
 .empty-state-action {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-3);
   margin-top: var(--space-3);
 }
 
@@ -3578,4 +3583,158 @@
   display: grid;
   justify-items: start;
   gap: var(--space-3);
+}
+
+/* ------------------------------------------------------- Knowledge health -- */
+
+.screen-knowledge-health .health-issue {
+  display: grid;
+  justify-items: start;
+  gap: var(--space-1);
+  min-width: 0;
+}
+
+/* Under the header: the weekly check's line sits close to the description, not a section apart. */
+.screen-knowledge-health .health-last-run {
+  margin: calc(-1 * var(--space-4)) 0 0;
+}
+
+/* The type filter and the table under it: the inbox toolbar's gap. */
+.screen-knowledge-health > .tabs > .tab-panel {
+  display: grid;
+  gap: var(--space-4);
+}
+
+/* The issue's title opens its drawer: a link button that wraps like text, flush with the text
+   of the other cells (no inline padding or border). */
+.screen-knowledge-health .health-issue-title,
+.screen-test-lab .test-lab-question {
+  justify-content: flex-start;
+  max-width: 100%;
+  padding-inline: 0;
+  border-inline-width: 0;
+  font-weight: var(--weight-medium);
+  text-align: start;
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+
+.screen-knowledge-health .health-issue-badges {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-1);
+}
+
+.screen-knowledge-health .health-section,
+.screen-test-lab .test-lab-section {
+  display: grid;
+  gap: var(--space-3);
+  min-width: 0;
+}
+
+.screen-knowledge-health .health-section h3,
+.screen-test-lab .test-lab-section h3 {
+  margin: 0;
+  font-size: var(--text-md);
+  line-height: var(--leading-md);
+  font-weight: var(--weight-semibold);
+}
+
+.screen-knowledge-health .health-samples .list-row-text {
+  overflow-wrap: anywhere;
+}
+
+.screen-knowledge-health .health-missing {
+  margin: 0;
+  padding-inline-start: var(--space-5);
+}
+
+/* ---------------------------------------------------------------- Test Lab -- */
+
+.screen-test-lab .test-lab-hint {
+  padding: var(--space-3) var(--space-4) 0;
+}
+
+/* "Run all" with the reason it can't run, as text under it. */
+.screen-test-lab .test-lab-run {
+  display: grid;
+  justify-items: end;
+  gap: var(--space-1);
+}
+
+.screen-test-lab .test-lab-run .field-hint {
+  margin: 0;
+  max-width: 32ch;
+  text-align: end;
+}
+
+/* The launch score: the kit's Stat, with its band, bar and a note under the number. */
+.screen-test-lab .test-lab-score .stat {
+  gap: var(--space-2);
+}
+
+.screen-test-lab .test-lab-score .status {
+  justify-self: start;
+}
+
+.screen-test-lab .test-lab-score .progress {
+  width: 100%;
+}
+
+.screen-test-lab .test-lab-score .field-hint {
+  margin: 0;
+}
+
+.screen-test-lab .test-lab-answer {
+  margin: 0;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.screen-test-lab .test-lab-picker {
+  display: grid;
+  gap: var(--space-3);
+  min-width: 0;
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+
+.screen-test-lab .test-lab-picker legend {
+  margin-bottom: var(--space-2);
+  padding: 0;
+  font-size: var(--text-sm);
+  line-height: var(--leading-sm);
+  font-weight: var(--weight-semibold);
+}
+
+.screen-test-lab .test-lab-results {
+  max-height: 20rem;
+  overflow-y: auto;
+}
+
+.screen-test-lab .test-lab-results .list-row-text {
+  overflow-wrap: anywhere;
+}
+
+.screen-test-lab .test-lab-picker .field-hint {
+  margin: 0;
+}
+
+@media (max-width: 640px) {
+  .screen-test-lab .test-lab-run {
+    justify-items: start;
+  }
+
+  .screen-test-lab .test-lab-run .field-hint {
+    text-align: start;
+  }
+
+  /* Tap targets: compact buttons are a full control tall on a phone (as in the inbox). */
+  .screen-knowledge-health .button.button-sm:not(.button-link),
+  .screen-test-lab .button.button-sm:not(.button-link),
+  .screen-knowledge-health .health-issue-title,
+  .screen-test-lab .test-lab-question {
+    min-height: var(--control);
+  }
 }
