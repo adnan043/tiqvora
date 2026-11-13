@@ -1,4 +1,4 @@
-import {type KeyboardEvent, type ReactNode, useId, useLayoutEffect, useRef, useState} from 'react';
+import {type KeyboardEvent, type ReactNode, type Ref, useId, useImperativeHandle, useLayoutEffect, useRef, useState} from 'react';
 
 import {
   PRIORITY_LABELS,
@@ -22,6 +22,14 @@ import {SegmentedControl} from './nav';
 
 export type ComposerMode = 'reply' | 'note';
 
+/** What a screen can do to a Composer from outside (`handle`): saved replies, keyboard shortcuts. */
+export interface ComposerHandle {
+  /** Put `text` at the caret (replacing a selection), then focus the box with the caret after it. */
+  insert(text: string): void;
+  /** Focus the box, caret at the end. */
+  focus(): void;
+}
+
 /** The counter shows once the text is this close to `maxLength`. */
 const COUNTER_FROM = 0.8;
 /** The composer grows to this many lines, then scrolls. */
@@ -35,7 +43,12 @@ const MAX_LINES = 6;
  * `onSend` returns a Promise: the text is cleared only when it resolves, so a
  * failed send never loses what was typed (show the error with `error`).
  * With `modes`, a Reply / Note switch sits above it; a note is drawn on the
- * warning fill so nobody mistakes it for a reply the customer will see.
+ * warning fill so nobody mistakes it for a reply the customer will see (say so in `hint`).
+ *
+ * `tools` sits on the row above the box, at its end (a "Saved replies"
+ * button). `handle` lets the screen insert text at the caret or focus the
+ * box. `initialText` + `onTextChange` keep a draft outside (per ticket): give
+ * the Composer a `key` per draft so it starts again from `initialText`.
  */
 export function Composer({
   label,
@@ -51,6 +64,10 @@ export function Composer({
   pendingLabel = 'Sending…',
   error,
   hint,
+  tools,
+  handle,
+  initialText = '',
+  onTextChange,
 }: {
   /** What the box is for ("Reply to Maya"). Always shown above it; "Internal note" in note mode. */
   label: string;
@@ -70,10 +87,24 @@ export function Composer({
   error?: string;
   /** A short line under the box ("Answers in about 2 hours"). */
   hint?: ReactNode;
+  /** Buttons on the row above the box, at its end ("Saved replies"). Shown with or without `modes`. */
+  tools?: ReactNode;
+  /** `insert(text)` and `focus()` from the screen. */
+  handle?: Ref<ComposerHandle>;
+  /** The text to start with (a kept draft). Read once: change the Composer's `key` to start again. */
+  initialText?: string;
+  /** Every change of the text (typing, insert, cleared after a send), to keep a draft. */
+  onTextChange?: (text: string) => void;
 }) {
   const id = useId();
   const ref = useRef<HTMLTextAreaElement>(null);
-  const [text, setText] = useState('');
+  const [text, setOwnText] = useState(initialText);
+  const setText = (next: string) => {
+    setOwnText(next);
+    onTextChange?.(next);
+  };
+  // Where the caret goes after an `insert`, applied once the new text is rendered.
+  const caret = useRef<number | null>(null);
   const [ownMode, setOwnMode] = useState<ComposerMode>('reply');
   const mode = controlledMode ?? ownMode;
   const setMode = (next: ComposerMode) => {
@@ -96,11 +127,40 @@ export function Composer({
     const wanted = el.scrollHeight + border;
     el.style.height = `${Math.min(wanted, max)}px`;
     el.style.overflowY = wanted > max ? 'auto' : 'hidden';
+    if (caret.current !== null) {
+      el.setSelectionRange(caret.current, caret.current);
+      caret.current = null;
+    }
   }, [text]);
 
+  useImperativeHandle(
+    handle,
+    () => ({
+      insert(piece: string) {
+        const el = ref.current;
+        const current = el?.value ?? text;
+        const start = el ? el.selectionStart : current.length;
+        const end = el ? el.selectionEnd : current.length;
+        caret.current = start + piece.length;
+        setText(current.slice(0, start) + piece + current.slice(end));
+        el?.focus();
+      },
+      focus() {
+        const el = ref.current;
+        if (!el) return;
+        el.focus();
+        el.setSelectionRange(el.value.length, el.value.length);
+      },
+    })
+    // No deps: rebuilt each render, so it always sees the latest text and `onTextChange`.
+  );
+
+  // The servers count the TRIMMED text, so the limit, the counter and Send do too.
   const trimmed = text.trim();
+  const length = trimmed.length;
+  const over = length > maxLength;
   const busy = pending || disabled;
-  const canSend = !busy && trimmed.length > 0 && text.length <= maxLength;
+  const canSend = !busy && length > 0 && !over;
 
   const send = async () => {
     if (!canSend) return;
@@ -122,7 +182,7 @@ export function Composer({
     }
   };
 
-  const showCounter = text.length >= maxLength * COUNTER_FROM;
+  const showCounter = length >= maxLength * COUNTER_FROM;
   const describedBy = [error ? `${id}-error` : '', hint && !error ? `${id}-hint` : '', showCounter ? `${id}-count` : ''].filter(Boolean).join(' ') || undefined;
 
   return (
@@ -134,18 +194,20 @@ export function Composer({
         event.preventDefault();
         void send();
       }}>
-      {modes && (
+      {(modes || tools) && (
         <div className="composer-modes">
-          <SegmentedControl
-            label="Message type"
-            value={mode}
-            onChange={setMode}
-            options={[
-              {value: 'reply', label: 'Reply'},
-              {value: 'note', label: 'Internal note'},
-            ]}
-          />
-          {mode === 'note' && <span className="composer-mode-hint">Only your team sees notes.</span>}
+          {modes && (
+            <SegmentedControl
+              label="Message type"
+              value={mode}
+              onChange={setMode}
+              options={[
+                {value: 'reply', label: 'Reply'},
+                {value: 'note', label: 'Internal note'},
+              ]}
+            />
+          )}
+          {tools && <div className="composer-tools">{tools}</div>}
         </div>
       )}
       <label className="composer-label" htmlFor={id}>
@@ -161,12 +223,12 @@ export function Composer({
           placeholder={placeholder}
           disabled={disabled}
           readOnly={pending}
-          aria-invalid={error || text.length > maxLength ? true : undefined}
+          aria-invalid={error || over ? true : undefined}
           aria-describedby={describedBy}
           onChange={event => setText(event.target.value)}
           onKeyDown={onKeyDown}
         />
-        <Button type="submit" icon="arrow-right" pending={pending} pendingLabel={pendingLabel} disabled={!canSend && !pending}>
+        <Button type="submit" iconEnd="arrow-right" pending={pending} pendingLabel={pendingLabel} disabled={!canSend && !pending}>
           {mode === 'note' ? 'Add note' : sendLabel}
         </Button>
       </div>
@@ -183,11 +245,16 @@ export function Composer({
           )
         )}
         {showCounter && (
-          <p className={['composer-count', text.length > maxLength ? 'composer-count-over' : ''].filter(Boolean).join(' ')} id={`${id}-count`} aria-live="polite">
-            {text.length > maxLength ? `${text.length - maxLength} characters too long` : `${maxLength - text.length} characters left`}
+          // Read with the box (aria-describedby), never announced per keystroke.
+          <p className={['composer-count', over ? 'composer-count-over' : ''].filter(Boolean).join(' ')} id={`${id}-count`}>
+            {over ? `${length - maxLength} characters too long` : `${maxLength - length} characters left`}
           </p>
         )}
       </div>
+      {/* Announced once, when the text goes over the limit (outside the foot: never display:none). */}
+      <span className="visually-hidden" aria-live="polite">
+        {over ? `Over the limit of ${maxLength} characters.` : ''}
+      </span>
     </form>
   );
 }

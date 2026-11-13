@@ -10,11 +10,15 @@ import {syncPermissions} from '../platform/permission-sync';
 import {authSettings} from './auth-settings';
 import {checkoutRoutes, membershipRoutes} from './routes/checkout';
 import {abilitiesFor, CATALOGUE} from './permissions';
+import {cannedRoutes} from './routes/canned';
 import {helpdeskRoutes} from './routes/helpdesk';
+import {helpdeskReportRoutes} from './routes/helpdesk-reports';
 import {helpdeskSettingsRoutes} from './routes/helpdesk-settings';
+import {inboxRoutes} from './routes/inbox';
 import {kbRoutes} from './routes/kb';
 import {kbManageRoutes} from './routes/kb-manage';
 import {siteRoutes} from './routes/site';
+import {conversationRoutes, myTicketRoutes} from './routes/support';
 
 /**
  * The Site API: this site's ONLY backend, one Hono app at `/site-api/*`.
@@ -32,6 +36,11 @@ import {siteRoutes} from './routes/site';
  *   *    /kb/manage/... the knowledge base, for its editors     routes/kb-manage.ts
  *   *    /kb/...        the public help center's data           routes/kb.ts
  *   *    /helpdesk/settings the assistant's settings (its managers) routes/helpdesk-settings.ts
+ *   POST /helpdesk/conversations  hand-off to a person (signed in)  routes/support.ts
+ *   *    /helpdesk/my/...  My support: my tickets, replies, rating   routes/support.ts
+ *   *    /helpdesk/tickets/... the inbox: queues, tickets, replies   routes/inbox.ts
+ *   *    /helpdesk/canned/...  agents' saved replies                 routes/canned.ts
+ *   GET  /helpdesk/reports/... assistant analytics (report holders)    routes/helpdesk-reports.ts
  *   *    /helpdesk/...  the chat assistant: ask, helpful, widget routes/helpdesk.ts
  *   *    /checkout/...  start and confirm a payment             routes/checkout.ts
  *   *    /memberships/... the member's memberships               routes/checkout.ts
@@ -82,8 +91,13 @@ export const app = new Hono()
   // `/kb/manage` BEFORE `/kb`, so no manage path is read as a public one.
   .route('/kb/manage', kbManageRoutes)
   .route('/kb', kbRoutes)
-  // `/helpdesk/settings` BEFORE `/helpdesk`, so no settings path is read as a public one.
+  // Every `/helpdesk/<name>` BEFORE `/helpdesk`, so none of their paths is read as a public one.
   .route('/helpdesk/settings', helpdeskSettingsRoutes)
+  .route('/helpdesk/conversations', conversationRoutes)
+  .route('/helpdesk/my', myTicketRoutes)
+  .route('/helpdesk/tickets', inboxRoutes)
+  .route('/helpdesk/canned', cannedRoutes)
+  .route('/helpdesk/reports', helpdeskReportRoutes)
   .route('/helpdesk', helpdeskRoutes)
   .route('/memberships', membershipRoutes)
 

@@ -32,6 +32,15 @@ export const CATALOGUE = definePermissions({
     ability: 'useInbox',
     roles: ['admin', 'agent'],
   },
+  /** Deleting a ticket and its whole conversation (spam, mistakes). Admins only by default. */
+  HELPDESK_DELETE: {
+    codename: 'site:helpdesk:delete',
+    title: 'Delete tickets',
+    description: 'Delete a ticket and its whole conversation (spam, mistakes).',
+    group: 'Help desk',
+    ability: 'deleteTickets',
+    roles: ['admin'],
+  },
   /** Categories, articles, snippets, imports, approving AI drafts (`/dashboard/articles`…). */
   KB_EDIT: {
     codename: 'site:kb:edit',

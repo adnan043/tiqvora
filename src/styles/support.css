@@ -1,0 +1,78 @@
+/* ---------- My support (src/portal/screens/support.tsx): the customer's own requests ----------
+   Tokens only (docs/design-system.md, tests/design-tokens.test.ts). Breakpoints 640 / 1024 / 1280. */
+
+.screen-support-main {
+  display: grid;
+  gap: var(--space-4);
+  min-width: 0;
+}
+
+/* Two columns (above 1024px): the conversation scrolls inside its card, sized so the page head,
+   the newest messages and the reply box fit one screen (1440 × 900) with no page scroll to reach
+   it. Narrower, the thread flows in the page: never a scroll area inside the page's scroll. */
+.screen-support-thread {
+  padding: var(--space-4) var(--space-5);
+}
+
+@media (min-width: 1025px) {
+  .screen-support-thread {
+    max-height: max(16rem, calc(100dvh - 32rem));
+    overflow-y: auto;
+    overscroll-behavior: contain;
+  }
+}
+
+.screen-support-thread:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+}
+
+.screen-support-earlier {
+  display: grid;
+  justify-items: center;
+  gap: var(--space-2);
+  margin-bottom: var(--space-4);
+}
+
+/* "New reply" next to a request's subject in the list. */
+.screen-support-unread {
+  display: inline-flex;
+  margin-left: var(--space-2);
+  vertical-align: middle;
+}
+
+/* Focus lands here after a rating: no ring around a message that is not a control. */
+.screen-support-thanks:focus {
+  outline: none;
+}
+
+/* "This is solved" in the About card's foot: a line of why, then the button. */
+.screen-support-solve {
+  display: grid;
+  flex: 1;
+  justify-items: start;
+  gap: var(--space-3);
+}
+
+.screen-support-solve p {
+  margin: 0;
+}
+
+@media (max-width: 640px) {
+  /* A flush card already pads its body on a phone: no second inset, so messages line up with
+     the card's title and use the phone's whole width. */
+  .screen-support-thread {
+    padding: 0;
+  }
+
+  /* Tap targets ≥ 40px on a phone: small buttons ("Show earlier messages") too. */
+  .screen-support .button.button-sm {
+    min-height: var(--control);
+  }
+
+  .screen-support-unread {
+    display: flex;
+    margin-left: 0;
+    margin-top: var(--space-1);
+  }
+}

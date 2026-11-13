@@ -47,6 +47,12 @@ export interface ProviderRequest {
   messages: ProviderMessage[];
   /** Send `fallbacks` (+ its beta header): only for a model that has them (`AiModel.serverFallback`). */
   serverFallback: boolean;
+  /** The JSON schema the reply must follow. Default: the assistant's ANSWER_SCHEMA. */
+  schema?: object;
+  /** The reply's token ceiling (bounds the cost: the caller's hold uses the same number). Default: MAX_TOKENS. */
+  maxTokens?: number;
+  /** How long to wait for the provider, in ms. Default: TIMEOUT_MS (10 s). */
+  timeoutMs?: number;
 }
 
 /** One model run inside the call: the requested one, then each server-side fallback. */
@@ -95,14 +101,19 @@ function fail(reason: ProviderFailure, detail?: string | number): ProviderResult
   return {ok: false, reason};
 }
 
+/** A whole number ≥ 1, else the default (an optional limit given as 0, NaN or a fraction never weakens it). */
+function positiveInt(value: number | undefined, fallback: number): number {
+  return typeof value === 'number' && Number.isSafeInteger(value) && value > 0 ? value : fallback;
+}
+
 /** The request body (exported for the provider's unit test). No `temperature` / `thinking`: defaults. */
 export function requestBody(req: ProviderRequest): Record<string, unknown> {
   return {
     model: req.model,
-    max_tokens: MAX_TOKENS,
+    max_tokens: positiveInt(req.maxTokens, MAX_TOKENS),
     system: req.system,
     messages: req.messages,
-    output_config: {effort: 'low', format: {type: 'json_schema', schema: ANSWER_SCHEMA}},
+    output_config: {effort: 'low', format: {type: 'json_schema', schema: req.schema ?? ANSWER_SCHEMA}},
     // A policy refusal retried on the provider's default fallback model, in the same call.
     // Never for a model without them (Claude Haiku 5.5: a 400).
     ...(req.serverFallback ? {fallbacks: 'default'} : {}),
@@ -126,7 +137,7 @@ async function realCall(key: string, req: ProviderRequest): Promise<ProviderResu
       headers,
       body: JSON.stringify(requestBody(req)),
       redirect: 'manual',
-      signal: AbortSignal.timeout(TIMEOUT_MS),
+      signal: AbortSignal.timeout(positiveInt(req.timeoutMs, TIMEOUT_MS)),
     });
     if (!res.ok) {
       // Drain nothing we'd log; let the connection go.

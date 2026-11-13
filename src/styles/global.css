@@ -2321,6 +2321,43 @@ html.hd-lock body {
   line-height: var(--leading-sm);
 }
 
+/* "Talk to a person": sign in, confirm (an optional note), sent. The title, the note's
+   form and the buttons fill the box (the message column is otherwise as wide as its text). */
+.hd-person-title {
+  align-self: stretch;
+  font-weight: var(--weight-semibold);
+  border-radius: var(--radius-sm);
+}
+
+.hd-person > form,
+.hd-person-actions {
+  align-self: stretch;
+  width: 100%;
+}
+
+.hd-person p:focus {
+  outline: none;
+}
+
+.hd-person p:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: var(--space-1);
+}
+
+.hd-person .field {
+  margin: var(--space-3) 0;
+}
+
+.hd-person .field textarea {
+  min-height: auto;
+}
+
+.hd-person-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-3);
+}
+
 /* Full screen at tablet width and below (a side sheet would cover most of the page). */
 @media (max-width: 1024px) {
   .hd-panel {
@@ -2334,6 +2371,11 @@ html.hd-lock body {
   .hd-launcher.button,
   .hd-send.button,
   .hd-head-person.button {
+    min-height: var(--control-lg);
+  }
+
+  .hd-person-actions .button {
+    flex: 1 1 100%;
     min-height: var(--control-lg);
   }
 

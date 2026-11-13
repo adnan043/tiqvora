@@ -199,7 +199,7 @@ export function Snippets() {
               </EmptyState>
             ) : (
               <EmptyState
-                icon="zap"
+                icon="layers"
                 title="No snippets yet"
                 action={
                   <Button variant="secondary" icon="plus" onClick={startNew}>

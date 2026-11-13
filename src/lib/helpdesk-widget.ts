@@ -6,21 +6,48 @@
  *
  * - `GET /site-api/helpdesk/widget` (WidgetConfig): fails → nothing is rendered.
  * - `POST /site-api/helpdesk/ask` (AskInput → AskResult), `POST …/ask/:logId/helpful`.
- * - The transcript (roles, text and the answer's article links; never ids or tokens)
- *   lives in `sessionStorage` `hd:transcript`, so the conversation survives a full load
- *   and Phase 3's hand-off can pick it up. A question whose request failed is not saved.
- *   Base.astro clears it on sign-out.
+ * - "Talk to a person": signed out → sign in / create an account, back to this page;
+ *   signed in → a confirm step, then `POST /site-api/helpdesk/conversations`
+ *   (CreateConversationInput → CreateConversationResult) with the hand-off's key.
+ * - What it keeps in `sessionStorage` (transcript, hand-off, sent request) is in
+ *   `./helpdesk-handoff.ts`; Base.astro clears it on sign-out (`./helpdesk-storage.ts`). A question whose
+ *   request failed is not saved.
  *
  * DOM is built with createElement + textContent only (never innerHTML); no inline
  * styles but the composer's height (CSSOM, allowed by the CSP). The mount persists
  * across ClientRouter navigations, so one panel stays open from page to page.
  */
 import {siteFetch} from '../platform/browser';
+import {signedIn} from './account';
+import {
+  accountUrl,
+  beginHandoff,
+  forgetHandoff,
+  HANDOFF_LIMITS,
+  handoffBody,
+  handoffOutcome,
+  handoffSent,
+  pendingHandoff,
+  restoreTranscript,
+  safeCitations,
+  saveTranscript,
+  sentTicket,
+  ticketNumberOf,
+  type Handoff,
+  type Line,
+  type StorageLike,
+} from './helpdesk-handoff';
 import {ASK_LIMITS, LOG_ID_RE, type AskCitation, type AskResult, type AskRole, type WidgetConfig} from './helpdesk-types';
 
-type Line = {role: AskRole; text: string; citations?: AskCitation[]};
+/** This tab's storage, or null when the browser blocks it. */
+function tabStorage(): StorageLike | null {
+  try {
+    return window.sessionStorage;
+  } catch {
+    return null;
+  }
+}
 
-const TRANSCRIPT_KEY = 'hd:transcript';
 const KEEP = 50;
 /** Full screen (and so modal) at tablet width and below; a 400px side sheet above. */
 const FULL = '(max-width: 1024px)';
@@ -38,7 +65,16 @@ const T = {
   looking: 'Looking for an answer…',
   failed: 'We couldn’t reach the assistant. Check your connection and try again.',
   short: `Type a question of at least ${ASK_LIMITS.questionMin} characters.`,
+  noteNeeded: 'Tell us what you need help with.',
+  noteLong: `Keep your message under ${HANDOFF_LIMITS.note.toLocaleString('en-US')} characters.`,
+  sendFailed: 'We couldn’t send this. Check your connection and try again.',
+  unverified: 'Confirm your email address first, then try again.',
 };
+/** The hand-off note mirrors the server: up to TICKET_LIMITS.note, required only with no customer line. */
+const NOTE_MAX = HANDOFF_LIMITS.note;
+/** The note's counter shows from 80% of the limit (as the kit's Composer). */
+const NOTE_COUNT_FROM = Math.floor(NOTE_MAX * 0.8);
+const chars = (n: number) => `${n} ${n === 1 ? 'character' : 'characters'}`;
 
 let config: WidgetConfig | null = null;
 let loading: Promise<WidgetConfig | null> | null = null;
@@ -54,42 +90,6 @@ function loadConfig(): Promise<WidgetConfig | null> {
     .catch(() => null)
     .finally(() => (loading = null));
   return loading;
-}
-
-/** Only links into the help center, at most 5: what the server sent or what storage holds. */
-function safeCitations(list: unknown): AskCitation[] {
-  if (!Array.isArray(list)) return [];
-  return list
-    .filter(
-      (c): c is AskCitation =>
-        !!c && typeof c.url === 'string' && c.url.startsWith('/help/articles/') && typeof c.title === 'string'
-    )
-    .slice(0, 5)
-    .map(c => ({title: c.title.slice(0, 200), url: c.url.slice(0, 300)}));
-}
-
-function readTranscript(): Line[] {
-  try {
-    const data = JSON.parse(sessionStorage.getItem(TRANSCRIPT_KEY) ?? '[]') as unknown;
-    if (!Array.isArray(data)) return [];
-    return data
-      .filter(
-        (l): l is Line =>
-          !!l && (l.role === 'customer' || l.role === 'assistant') && typeof l.text === 'string' && l.text.length > 0
-      )
-      .slice(-KEEP)
-      .map(l => (l.role === 'assistant' ? {role: l.role, text: l.text, citations: safeCitations(l.citations)} : {role: l.role, text: l.text}));
-  } catch {
-    return [];
-  }
-}
-
-function saveTranscript(lines: Line[]): void {
-  try {
-    sessionStorage.setItem(TRANSCRIPT_KEY, JSON.stringify(lines));
-  } catch {
-    // Storage blocked: the conversation still works, it just won't survive a reload.
-  }
 }
 
 /** The last 10 messages, at most 4,000 characters in all, newest kept (text only). */
@@ -167,6 +167,7 @@ export async function mountHelpdeskWidget(root: HTMLElement): Promise<void> {
   launcher.setAttribute('aria-haspopup', 'dialog');
   root.append(launcher);
 
+  const storage = tabStorage();
   let panel: HTMLElement | null = null;
   let log: HTMLElement;
   let live: HTMLElement;
@@ -176,9 +177,12 @@ export async function mountHelpdeskWidget(root: HTMLElement): Promise<void> {
   let count: HTMLElement;
   let quick: HTMLElement | null = null;
   let busy = false;
+  /** The hand-off under way (its key is reused on every retry) and whether it is being sent. */
+  let handoff: Handoff | null = pendingHandoff(storage);
+  let sending = false;
   let inerted: Element[] = [];
   const full = window.matchMedia(FULL);
-  const transcript = readTranscript();
+  const transcript = restoreTranscript(storage);
   // Document and media listeners: one set per root, dropped when the root leaves the page.
   const ac = new AbortController();
   const {signal} = ac;
@@ -186,7 +190,7 @@ export async function mountHelpdeskWidget(root: HTMLElement): Promise<void> {
   const remember = (line: Line) => {
     transcript.push(line);
     if (transcript.length > KEEP) transcript.splice(0, transcript.length - KEEP);
-    saveTranscript(transcript);
+    saveTranscript(storage, transcript);
   };
 
   const scroll = () => (log.scrollTop = log.scrollHeight);
@@ -234,26 +238,290 @@ export async function mountHelpdeskWidget(root: HTMLElement): Promise<void> {
   /** Inline buttons sit only on the latest reply; the header's stays. */
   const personButton = (primary: boolean, inline = true) => {
     const b = button(T.person, `button${primary ? '' : ' button-secondary'}${inline ? ' hd-inline-person' : ' hd-head-person'}`);
-    b.addEventListener('click', talkToPerson);
+    b.addEventListener('click', () => void talkToPerson(b));
     return b;
   };
 
-  /** Phase 2: the real hand-off comes in Phase 3. Sign in; the transcript waits in this tab. */
-  function talkToPerson() {
-    const last = log.lastElementChild;
-    if (last?.classList.contains('hd-person')) {
-      last.querySelector('a')?.focus();
+  /** The hand-off box: one per panel, re-used while it is the last thing in the log. */
+  let personBox: HTMLElement | null = null;
+  const box = (): HTMLElement => {
+    if (!personBox || log.lastElementChild !== personBox) {
+      personBox?.remove();
+      personBox = el('div', 'hd-msg hd-msg-ai hd-person');
+      log.append(personBox);
+    }
+    return personBox;
+  };
+  const hours = (): HTMLElement[] => (cfg.businessHours ? [el('p', 'hd-muted', `Our team is around ${cfg.businessHours}.`)] : []);
+  /** A line that takes focus (tabIndex -1) when the box changes. */
+  const lead = (text: string, className = 'hd-person-title'): HTMLElement => {
+    const p = el('p', className, text);
+    p.tabIndex = -1;
+    return p;
+  };
+  /** The box is open: the reply's inline "Talk to a person" would only repeat it (the header's stays). */
+  const show = (b: HTMLElement, ...nodes: Node[]) => {
+    b.replaceChildren(...nodes);
+    log.querySelectorAll('.hd-inline-person').forEach(n => n.remove());
+    scroll();
+  };
+  const actions = (...nodes: HTMLElement[]) => {
+    const row = el('div', 'hd-person-actions');
+    row.append(...nodes);
+    return row;
+  };
+  const link = (text: string, href: string, className = 'button'): HTMLAnchorElement => {
+    const a = el('a', className, text);
+    a.href = href;
+    return a;
+  };
+  const here = () => location.pathname + location.search;
+
+  /** "Talk to a person": already sent, signed out (sign in) or signed in (confirm). */
+  async function talkToPerson(from?: HTMLButtonElement) {
+    if (sending) return;
+    const sent = sentTicket(storage);
+    if (sent) return showSent(sent);
+    if (from) setPending(from, 'One moment…');
+    const yes = await signedIn();
+    if (from) setPending(from, null);
+    if (yes) confirmStep();
+    else signInStep();
+  }
+
+  /** Step 2: sign in, or create an account, and come back to this page. */
+  function signInStep(ended = false) {
+    const b = box();
+    const signIn = link('Sign in to continue', accountUrl('login', here()));
+    const register = link('Create an account', accountUrl('register', here()), 'button button-secondary');
+    // The flag (with the hand-off's key) is written only when they go, not on show.
+    for (const a of [signIn, register]) a.addEventListener('click', () => (handoff = beginHandoff(storage, 'signin', Date.now(), false, handoff)));
+    const title = lead(T.person);
+    const endedNote = el('p', 'hd-error', 'Your sign-in ended. Sign in again to send this to our team.');
+    endedNote.setAttribute('role', 'alert');
+    show(
+      b,
+      title,
+      ...(ended ? [endedNote] : []),
+      el('p', '', 'Sign in so our team can reply to you. We’ll keep this conversation and send it with your request.'),
+      ...hours(),
+      actions(signIn, register)
+    );
+    title.focus();
+  }
+
+  /**
+   * Step 4: signed in. A note (optional, up to the server's 4,000 characters; required
+   * only when the chat has no question from them), then send.
+   */
+  function confirmStep(fresh = false) {
+    handoff = beginHandoff(storage, 'confirm', Date.now(), fresh, handoff);
+    const b = box();
+    const n = transcript.length;
+    const asked = transcript.some(l => l.role === 'customer');
+    const field = el('div', 'field');
+    const label = el('label', '', asked ? 'Anything else our team should know?' : 'What do you need help with?');
+    label.htmlFor = 'hd-handoff-note';
+    const note = el('textarea');
+    note.id = 'hd-handoff-note';
+    note.rows = 3;
+    note.placeholder = asked ? 'e.g. My order number is 4471.' : 'e.g. My grinder makes a loud noise since yesterday.';
+    const hint = el('p', 'field-hint', asked ? 'Optional.' : 'Required.');
+    hint.id = 'hd-handoff-hint';
+    const count = el('p', 'field-hint');
+    count.id = 'hd-handoff-count';
+    count.hidden = true;
+    const err = el('p', 'field-error');
+    err.id = 'hd-handoff-error';
+    err.setAttribute('role', 'alert');
+    err.hidden = true;
+    note.setAttribute('aria-describedby', 'hd-handoff-hint hd-handoff-count hd-handoff-error');
+    if (!asked) note.required = true;
+    // Kit order: label, field, hint (hidden while there is an error), counter, error.
+    field.append(label, note, hint, count, err);
+    const form = el('form');
+    form.noValidate = true;
+    const go = button('Send to our team', 'button');
+    go.type = 'submit';
+    const keep = button('Keep chatting');
+    form.append(field, actions(go, keep));
+    const status = el('p', 'hd-error');
+    status.setAttribute('role', 'alert');
+    status.hidden = true;
+    const title = lead(T.person);
+    show(
+      b,
+      title,
+      el(
+        'p',
+        '',
+        n && asked
+          ? `We’ll send this conversation (${n} ${n === 1 ? 'message' : 'messages'}) to our team with a short summary. They’ll reply in My support, on your dashboard.`
+          : 'Tell us what you need, and our team will reply in My support, on your dashboard.'
+      ),
+      form,
+      status,
+      ...hours()
+    );
+
+    const fieldError = (text: string) => {
+      err.textContent = text;
+      err.hidden = !text;
+      hint.hidden = !!text;
+      if (text) note.setAttribute('aria-invalid', 'true');
+      else note.removeAttribute('aria-invalid');
+    };
+    /** What is wrong with the note, as the server would say it, or ''. */
+    const problem = () => {
+      const text = note.value.trim();
+      if (text.length > NOTE_MAX) return T.noteLong;
+      if (!asked && !text) return T.noteNeeded;
+      return '';
+    };
+    const showNoteCount = () => {
+      const len = note.value.trim().length;
+      count.hidden = len < NOTE_COUNT_FROM;
+      count.textContent = len > NOTE_MAX ? `${chars(len - NOTE_MAX)} too long.` : `${chars(NOTE_MAX - len)} left.`;
+    };
+    let checked = false;
+    note.addEventListener('blur', () => {
+      if (note.value.trim()) checked = true;
+      if (checked) fieldError(problem());
+    });
+    note.addEventListener('input', () => {
+      showNoteCount();
+      // Over the limit shows at once; "required" waits for a blur or a submit.
+      if (checked || note.value.trim().length > NOTE_MAX) fieldError(problem());
+    });
+    keep.addEventListener('click', () => {
+      b.remove();
+      personBox = null;
+      input.focus();
+    });
+    form.addEventListener('submit', e => {
+      e.preventDefault();
+      if (sending) return;
+      checked = true;
+      const wrong = problem();
+      if (wrong) {
+        fieldError(wrong);
+        note.focus();
+        return;
+      }
+      fieldError('');
+      status.hidden = true;
+      status.replaceChildren();
+      void create(note, go, keep, status, fieldError);
+    });
+    title.focus();
+  }
+
+  /** Step 5: POST the conversation with the hand-off's key (the same key on every retry). */
+  async function create(
+    note: HTMLTextAreaElement,
+    go: HTMLButtonElement,
+    keep: HTMLButtonElement,
+    status: HTMLElement,
+    fieldError: (text: string) => void
+  ) {
+    handoff ??= beginHandoff(storage, 'confirm');
+    const key = handoff.key;
+    sending = true;
+    setPending(go, 'Sending…');
+    note.readOnly = true;
+    keep.disabled = true;
+    // The composer's Send is only disabled: the hand-off's own button shows the progress.
+    setBusy(true, false);
+    const typing = dots();
+    log.append(typing);
+    scroll();
+    announce('Sending your conversation to our team…');
+    let code: number | null = null;
+    type Answer = {error?: unknown; message?: unknown; fields?: Record<string, string>; ticket?: unknown} | null;
+    let data = null as Answer;
+    try {
+      const res = await siteFetch(`${API}/conversations`, {
+        method: 'POST',
+        headers: {'content-type': 'application/json', accept: 'application/json', 'idempotency-key': key},
+        body: JSON.stringify(handoffBody(key, transcript, note.value, location.pathname)),
+      });
+      code = res.status;
+      data = (await res.json().catch(() => null)) as Answer;
+    } catch {
+      // Network: retry with the same key.
+    }
+    typing.remove();
+    // The outcome speaks for itself (focus on the title, or the alert): no stale "Sending…".
+    announce('');
+    sending = false;
+    setBusy(false);
+    const outcome = handoffOutcome(code);
+    const number = ticketNumberOf(data);
+    if (outcome === 'sent' && number) {
+      handoffSent(storage, number);
+      handoff = null;
+      transcript.length = 0;
+      showSent(number, true);
       return;
     }
-    const box = el('div', 'hd-msg hd-msg-ai hd-person');
-    box.append(el('p', '', 'To talk to a person, sign in. We’ll keep this conversation for you.'));
-    if (cfg?.businessHours) box.append(el('p', 'hd-muted', `Our team is around ${cfg.businessHours}.`));
-    const a = el('a', 'button', 'Sign in to continue');
-    a.href = `/account/login/?next=${encodeURIComponent(location.pathname)}`;
-    box.append(a);
-    log.append(box);
-    scroll();
-    a.focus();
+    if (outcome === 'signin') {
+      signInStep(true);
+      return;
+    }
+    if (outcome === 'stop') {
+      forgetHandoff(storage);
+      handoff = null;
+    }
+    setPending(go, null);
+    note.readOnly = false;
+    keep.disabled = false;
+    if (code === 422 && data?.fields) {
+      fieldError(data.fields.note ?? Object.values(data.fields)[0] ?? T.sendFailed);
+      announce('');
+      note.focus();
+      return;
+    }
+    if (code === 403 && data?.error === 'email_unverified') {
+      // Not confirmed yet: the account page shows the address and how to confirm it.
+      status.replaceChildren(document.createTextNode(`${T.unverified} `), link('Go to your account', '/dashboard/account', ''));
+    } else {
+      // 429 (the hourly or the per-minute window) and other 4xx carry the server's own words.
+      status.textContent =
+        code !== null && code < 500 && typeof data?.message === 'string' && data.message ? data.message : T.sendFailed;
+    }
+    status.hidden = false;
+    go.focus();
+  }
+
+  /** Step 6 (and later clicks in this tab): the request's number and a way to it. */
+  function showSent(number: number, now = false) {
+    const b = box();
+    const view = link('View your request', `/dashboard/support/${number}`);
+    if (now) {
+      // Focus on the title says it (no announcement on top).
+      const title = lead(`Thanks, we’ve got it. Your request number is #${number}.`);
+      show(b, title, el('p', '', 'You’ll see our reply in My support.'), ...hours(), actions(view));
+      title.focus();
+      return;
+    }
+    const again = button('Start a new request');
+    again.addEventListener('click', () => {
+      forgetHandoff(storage);
+      handoff = null;
+      void talkToPersonFresh(again);
+    });
+    const title = lead('You’ve already sent a request');
+    show(b, title, el('p', '', `Your request number is #${number}. Add to it there, or start a new one.`), actions(view, again));
+    title.focus();
+  }
+
+  /** "Start a new request": past the sent check, a new key. */
+  async function talkToPersonFresh(from: HTMLButtonElement) {
+    setPending(from, 'One moment…');
+    const yes = await signedIn();
+    setPending(from, null);
+    if (yes) confirmStep(true);
+    else signInStep();
   }
 
   const helpful = (logId: string): HTMLElement => {
@@ -362,10 +630,14 @@ export async function mountHelpdeskWidget(root: HTMLElement): Promise<void> {
     announce(text);
   };
 
-  const setBusy = (on: boolean) => {
+  /** `pending`: Send shows "Sending…" (a question); false: only disabled (a hand-off, its own button shows it). */
+  const setBusy = (on: boolean, pending = true) => {
     busy = on;
-    setPending(send, on ? 'Sending…' : null);
-    panel?.querySelectorAll<HTMLButtonElement>('.hd-chip').forEach(c => (c.disabled = on));
+    if (on && pending) setPending(send, 'Sending…');
+    else if (on) send.disabled = true;
+    else if (send.hasAttribute('aria-busy')) setPending(send, null);
+    else send.disabled = false;
+    panel?.querySelectorAll<HTMLButtonElement>('.hd-chip, .hd-head-person, .hd-inline-person').forEach(c => (c.disabled = on));
   };
 
   const showError = (text: string) => {
@@ -382,7 +654,17 @@ export async function mountHelpdeskWidget(root: HTMLElement): Promise<void> {
     count.textContent =
       len >= ASK_LIMITS.questionMax
         ? `That’s the ${ASK_LIMITS.questionMax}-character limit.`
-        : `${ASK_LIMITS.questionMax - len} characters left.`;
+        : `${chars(ASK_LIMITS.questionMax - len)} left.`;
+  };
+
+  /** The typing dots, hidden from screen readers (the live line says what is happening). */
+  const dots = (): HTMLElement => {
+    const typing = el('div', 'hd-msg hd-msg-ai hd-typing');
+    typing.setAttribute('aria-hidden', 'true');
+    const d = el('span', 'hd-dots');
+    d.append(el('span'), el('span'), el('span'));
+    typing.append(d);
+    return typing;
   };
 
   async function ask(raw: string) {
@@ -402,11 +684,7 @@ export async function mountHelpdeskWidget(root: HTMLElement): Promise<void> {
     input.value = '';
     grow();
     showCount();
-    const typing = el('div', 'hd-msg hd-msg-ai hd-typing');
-    typing.setAttribute('aria-hidden', 'true');
-    const dots = el('span', 'hd-dots');
-    dots.append(el('span'), el('span'), el('span'));
-    typing.append(dots);
+    const typing = dots();
     log.append(typing);
     scroll();
     announce(T.looking);
@@ -574,7 +852,7 @@ export async function mountHelpdeskWidget(root: HTMLElement): Promise<void> {
     {signal}
   );
 
-  function toggle(open: boolean) {
+  function toggle(open: boolean, focusInput = true) {
     if (open && !panel) {
       panel = build();
       root.append(panel);
@@ -589,11 +867,22 @@ export async function mountHelpdeskWidget(root: HTMLElement): Promise<void> {
     if (open) {
       grow();
       scroll();
-      input.focus();
+      if (focusInput) input.focus();
     } else {
       launcher.focus();
     }
   }
 
   launcher.addEventListener('click', () => toggle(true));
+
+  // Back from signing in (same tab, within 30 minutes): reopen with the transcript and
+  // the confirm step. Still signed out (they gave up): keep the flag until it expires.
+  // The one `/me` call happens only while that flag is there.
+  if (handoff?.step === 'signin') {
+    void signedIn().then(yes => {
+      if (!yes || !root.isConnected || sending) return;
+      toggle(true, false);
+      confirmStep();
+    });
+  }
 }

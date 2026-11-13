@@ -48,7 +48,7 @@ export function ChatMessage({
 }) {
   const name = author || SENDER_LABELS[sender];
   return (
-    <article className={`chat-message chat-message-${sender}`} aria-label={author ? `${SENDER_LABELS[sender]}: ${author}` : SENDER_LABELS[sender]}>
+    <article className={`chat-message chat-message-${sender}`} aria-label={!author ? SENDER_LABELS[sender] : author.startsWith(SENDER_LABELS[sender]) ? author : `${SENDER_LABELS[sender]}: ${author}`}>
       <div className="chat-message-head">
         {sender === 'ai' ? (
           <span className="chat-message-mark" aria-hidden="true">

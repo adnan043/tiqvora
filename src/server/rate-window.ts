@@ -1,6 +1,6 @@
 import type {Context} from 'hono';
 
-import type {PrismaClient} from '../generated/prisma/client';
+import type {Prisma, PrismaClient} from '../generated/prisma/client';
 import {clientIp, rateLimitIp} from '../platform/auth/kit';
 import {subjectHash} from '../platform/auth/keys';
 import {config} from '../platform/config';
@@ -14,7 +14,7 @@ import {config} from '../platform/config';
  * ONE conditional upsert per bucket: the database decides, so many requests at once can't
  * overshoot. True = counted and allowed; false = this minute's limit is already reached.
  * A write with RETURNING: never re-sent on a lost connection (docs/agent/database.md).
- * Minutes older than an hour are deleted by the hourly `rate-windows-cleanup` background job
+ * Rows older than an hour are deleted by the hourly `rate-windows-cleanup` background job
  * (src/server/background.ts, background.json).
  */
 export async function takeRateWindow(db: PrismaClient, bucket: string, limitPerMinute: number): Promise<boolean> {
@@ -23,6 +23,32 @@ export async function takeRateWindow(db: PrismaClient, bucket: string, limitPerM
   const rows = await db.$queryRaw<{count: number}[]>`
     INSERT INTO "rate_windows" ("bucket", "minute", "count")
     VALUES (${name}, date_trunc('minute', now()), 1)
+    ON CONFLICT ("bucket", "minute") DO UPDATE SET "count" = "rate_windows"."count" + 1
+    WHERE "rate_windows"."count" < ${limit}
+    RETURNING "count"`;
+  return rows.length > 0;
+}
+
+/**
+ * The same counter by the HOUR, for limits per account (help-desk customer messages:
+ * `hd-msg:<userId>`, 30 an hour). The row's `minute` is the start of the hour
+ * (`date_trunc('hour', now())`). ONE conditional upsert; true = counted and allowed.
+ * A fixed window: at most twice the limit across an hour boundary.
+ *
+ * The hourly cleanup deletes rows whose `minute` is more than an hour old, so the current hour's
+ * row (at most 59 minutes old) is never deleted while it counts. Keep bucket names distinct from
+ * the per-minute ones (a prefix of their own). Works with a transaction client too.
+ */
+export async function takeHourWindow(
+  db: PrismaClient | Prisma.TransactionClient,
+  bucket: string,
+  limitPerHour: number
+): Promise<boolean> {
+  const name = bucket.slice(0, 40);
+  const limit = Math.max(1, Math.floor(limitPerHour));
+  const rows = await db.$queryRaw<{count: number}[]>`
+    INSERT INTO "rate_windows" ("bucket", "minute", "count")
+    VALUES (${name}, date_trunc('hour', now()), 1)
     ON CONFLICT ("bucket", "minute") DO UPDATE SET "count" = "rate_windows"."count" + 1
     WHERE "rate_windows"."count" < ${limit}
     RETURNING "count"`;

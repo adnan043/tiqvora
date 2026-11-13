@@ -70,6 +70,11 @@ model User {
   recoveryCodes      RecoveryCode[]
   signInCodes        SignInCode[]
 
+  // Help desk (Phase 3): Prisma relation fields only, no column on `users`.
+  conversations   Conversation[]
+  assignedTickets Ticket[]       @relation("TicketAssignee")
+  ticketViews     TicketView[]
+
   @@index([status, id])
   @@map("users")
 }
@@ -558,20 +563,20 @@ model KbSnippet {
 /// or one snippet. Exactly one of articleId / snippetId (CHECK). Rebuilt in the
 /// same transaction as the article or snippet it comes from.
 model KbChunk {
-  id        Int        @id @default(autoincrement())
-  articleId Int?       @map("article_id")
-  snippetId Int?       @map("snippet_id")
-  position  Int        @default(0)
-  heading   String     @default("") @db.VarChar(200)
-  text      String     @db.VarChar(2000)
+  id        Int                      @id @default(autoincrement())
+  articleId Int?                     @map("article_id")
+  snippetId Int?                     @map("snippet_id")
+  position  Int                      @default(0)
+  heading   String                   @default("") @db.VarChar(200)
+  text      String                   @db.VarChar(2000)
   /// The full-text search vector, kept by the database: the BEFORE INSERT OR UPDATE OF
   /// heading, text trigger `kb_chunks_search_vec_trg` (migration ..._kb_chunks_search_vec)
   /// sets it to setweight(to_tsvector('simple', heading), 'A') || setweight(to_tsvector('simple', text), 'B').
   /// Never written by app code; read only in raw SQL (`KB_SEARCH_VECTOR`, src/server/kb/search.ts).
   searchVec Unsupported("tsvector")? @map("search_vec")
-  createdAt DateTime   @default(now()) @map("created_at") @db.Timestamptz(3)
-  article   KbArticle? @relation(fields: [articleId], references: [id], onDelete: Cascade)
-  snippet   KbSnippet? @relation(fields: [snippetId], references: [id], onDelete: Cascade)
+  createdAt DateTime                 @default(now()) @map("created_at") @db.Timestamptz(3)
+  article   KbArticle?               @relation(fields: [articleId], references: [id], onDelete: Cascade)
+  snippet   KbSnippet?               @relation(fields: [snippetId], references: [id], onDelete: Cascade)
 
   @@index([articleId, position])
   @@index([snippetId])
@@ -624,6 +629,10 @@ model QuestionLog {
 
   /// The week's questions (Knowledge Health, reports), keyset by id.
   @@index([createdAt, id])
+  /// Analytics' question list filtered by outcome, newest first (routes/helpdesk-reports.ts).
+  @@index([outcome, id])
+  /// Analytics' "Not helpful" filter, newest first.
+  @@index([helpful, id])
   @@map("question_logs")
 }
 
@@ -637,4 +646,160 @@ model AiUsage {
   updatedAt   DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
 
   @@map("ai_usage")
+}
+
+// ---------------------------------------------------------------------------
+// Help desk, Phase 3: talking to a person. Design: status lives ONLY on
+// conversations (tickets.solved_at mirrors "solved" in the same statement,
+// src/server/helpdesk/state.ts); tile counters are kept on write.
+
+/// One customer's conversation with the team, created at hand-off.
+model Conversation {
+  id             Int      @id @default(autoincrement())
+  /// The customer. SetNull: a deleted account leaves the ticket for the team, anonymised
+  /// ("Deleted customer"); nothing links it back to the person.
+  userId         Int?     @map("user_id")
+  /// `ai`, `waiting`, `open`, `pending` or `solved` (CHECK). Hand-off creates `waiting`.
+  status         String   @default("waiting") @db.VarChar(8)
+  /// `confirmed` (the customer said so), `assumed` (an agent solved it) or `none` (CHECK).
+  resolution     String   @default("none") @db.VarChar(9)
+  /// The page the hand-off started on: a path, no query.
+  pagePath       String   @default("") @map("page_path") @db.VarChar(300)
+  language       String   @default("") @db.VarChar(16)
+  /// The client's key for the create. Unique per user (idempotent hand-off).
+  requestKey     String   @map("request_key") @db.VarChar(64)
+  /// An agent replied since the customer last opened it ("My support" badge; no emails exist).
+  customerUnread Boolean  @default(false) @map("customer_unread")
+  createdAt      DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+  /// Last customer or agent message (notes don't move it): inbox order and age.
+  lastMessageAt  DateTime @default(now()) @map("last_message_at") @db.Timestamptz(3)
+  updatedAt      DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  user     User?     @relation(fields: [userId], references: [id], onDelete: SetNull)
+  messages Message[]
+  ticket   Ticket?
+
+  @@unique([userId, requestKey])
+  /// My support: my conversations, newest first (also the FK's index).
+  @@index([userId, id])
+  /// Pending and Solved queues.
+  @@index([status, lastMessageAt(sort: Desc), id(sort: Desc)])
+  @@map("conversations")
+}
+
+/// One line of a conversation. Append-heavy: BigInt id (a string in JSON).
+model Message {
+  id             BigInt   @id @default(autoincrement())
+  conversationId Int      @map("conversation_id")
+  /// `customer`, `ai`, `agent` or `note` (CHECK). `note` is internal: never sent to the customer.
+  sender         String   @db.VarChar(8)
+  /// `users.id` of the customer or agent. No FK: a message outlives its author's account. Null for `ai`.
+  authorUserId   Int?     @map("author_user_id")
+  /// Plain text, 1–4000. Never HTML.
+  body           String   @db.VarChar(4000)
+  /// `ai` lines: [{id: number|null, title, url}] (≤ 5), what the assistant showed. Snapshot.
+  citedArticles  Json?    @map("cited_articles")
+  /// `ai` lines: `high|medium|low|none`, else null.
+  confidence     String?  @db.VarChar(8)
+  tokens         Int      @default(0)
+  costMicros     Int      @default(0) @map("cost_micros")
+  createdAt      DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+
+  conversation Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+
+  @@index([conversationId, id])
+  @@map("messages")
+}
+
+/// The staff side of a conversation (1:1): number, subject, priority, assignee, AI summary, CSAT.
+model Ticket {
+  id              Int       @id @default(autoincrement())
+  conversationId  Int       @unique @map("conversation_id")
+  /// Shown to people (#1001…). Gaps are normal. Never a secret: every route authorizes.
+  number          Int       @unique @default(autoincrement())
+  subject         String    @db.VarChar(120)
+  /// `low`, `normal`, `high`, `urgent` (CHECK).
+  priority        String    @default("normal") @db.VarChar(6)
+  /// SetNull: an agent's deleted account un-assigns.
+  assigneeId      Int?      @map("assignee_id")
+  aiSummary       String?   @map("ai_summary") @db.VarChar(1200)
+  /// `pending`, `ready` or `unavailable` (CHECK).
+  aiSummaryState  String    @default("pending") @map("ai_summary_state") @db.VarChar(11)
+  /// The article links the assistant showed before the hand-off: [{id|null,title,url}] ≤ 10.
+  aiSources       Json?     @map("ai_sources")
+  /// Mirrors conversations.status = 'solved' (same statement). Null = not solved.
+  solvedAt        DateTime? @map("solved_at") @db.Timestamptz(3)
+  firstResponseAt DateTime? @map("first_response_at") @db.Timestamptz(3)
+  /// 1–5 (CHECK), once, only while solved.
+  csat            Int?      @db.SmallInt
+  csatAt          DateTime? @map("csat_at") @db.Timestamptz(3)
+  createdAt       DateTime  @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt       DateTime  @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  conversation Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  assignee     User?        @relation("TicketAssignee", fields: [assigneeId], references: [id], onDelete: SetNull)
+  views        TicketView[]
+
+  /// Assigned to me (assignee = me AND solved_at IS NULL), also the FK's index.
+  @@index([assigneeId, solvedAt, id])
+  @@map("tickets")
+}
+
+/// Who has a ticket open (collision hint), upserted every 30 s.
+model TicketView {
+  ticketId Int      @map("ticket_id")
+  userId   Int      @map("user_id")
+  viewedAt DateTime @default(now()) @map("viewed_at") @db.Timestamptz(3)
+
+  ticket Ticket @relation(fields: [ticketId], references: [id], onDelete: Cascade)
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@id([ticketId, userId])
+  @@index([userId])
+  @@map("ticket_views")
+}
+
+/// Overview tiles, kept on write (never count()): `unsolved`, `waiting_on_us`,
+/// `solved:YYYY-MM-DD` (the UTC Monday of the week). Changed only by state.ts.
+model HelpdeskCounter {
+  name      String   @id @db.VarChar(32)
+  value     Int      @default(0)
+  updatedAt DateTime @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  @@map("helpdesk_counters")
+}
+
+/// Saved replies agents insert into the composer (agents manage them). ≤ 100 rows.
+model HelpdeskCannedReply {
+  id        Int      @id @default(autoincrement())
+  title     String   @db.VarChar(80)
+  body      String   @db.VarChar(4000)
+  position  Int      @default(0)
+  createdBy Int      @map("created_by")
+  updatedBy Int      @map("updated_by")
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  @@index([position, id])
+  @@map("helpdesk_canned_replies")
+}
+
+/// Analytics: one row per UTC day, kept by a trigger on `question_logs` (migration
+/// helpdesk_analytics): an insert counts the question, its outcome and its cost; a change of
+/// `helpful` moves the thumbs. Never written by app code, never `count()`ed per request.
+/// A deleted log row leaves its day's numbers as they were (they outlive the log).
+model QuestionStatsDaily {
+  /// The UTC day the question was asked.
+  day         DateTime @id @db.Date
+  questions   Int      @default(0)
+  answered    Int      @default(0)
+  handedOff   Int      @default(0) @map("handed_off")
+  noSource    Int      @default(0) @map("no_source")
+  aiOff       Int      @default(0) @map("ai_off")
+  helpfulUp   Int      @default(0) @map("helpful_up")
+  helpfulDown Int      @default(0) @map("helpful_down")
+  costMicros  BigInt   @default(0) @map("cost_micros")
+  updatedAt   DateTime @default(now()) @map("updated_at") @db.Timestamptz(3)
+
+  @@map("question_stats_daily")
 }

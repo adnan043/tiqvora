@@ -26,10 +26,12 @@ describe('the permission catalogue', () => {
     expect(PERMISSIONS.KB_EDIT).toBe('site:kb:edit');
     expect(PERMISSIONS.HELPDESK_SETTINGS).toBe('site:helpdesk:settings');
     expect(PERMISSIONS.HELPDESK_REPORTS).toBe('site:helpdesk:reports');
+    expect(PERMISSIONS.HELPDESK_DELETE).toBe('site:helpdesk:delete');
     // Retired with the job board: nothing may check it again.
     expect('JOB_MANAGE' in PERMISSIONS).toBe(false);
     expect(Object.keys(NO_ABILITIES).sort()).toEqual(
       [
+        'deleteTickets',
         'editKnowledge',
         'editRoles',
         'manageHelpdesk',
@@ -57,6 +59,7 @@ describe('the permission catalogue', () => {
       editRoles: false,
       readAudit: true,
       useInbox: true,
+      deleteTickets: true,
       editKnowledge: true,
       manageHelpdesk: true,
       seeHelpdeskReports: true,

@@ -1,4 +1,5 @@
 import {useQuery} from '@tanstack/react-query';
+import {useCallback, useSyncExternalStore} from 'react';
 
 import type {Abilities, Viewer} from '../lib/types';
 import {meQuery, siteQuery} from './queries';
@@ -45,3 +46,40 @@ export function useSite() {
  */
 export const pageCount = (rows: unknown[] | undefined, more: boolean) =>
   rows ? `${rows.length}${more ? '+' : ''}` : null;
+
+/**
+ * Whether a media query matches now, and again whenever that changes
+ * (`useMediaQuery('(min-width: 1281px)')`). For a choice that CSS alone can't
+ * make, such as rendering controls in a side pane OR a drawer, never both.
+ * Use the design system's breakpoints (640 / 1024 / 1280). False without
+ * `matchMedia` (and while rendering on a server).
+ */
+export function useMediaQuery(query: string): boolean {
+  const subscribe = useCallback(
+    (onChange: () => void) => {
+      if (typeof window === 'undefined' || !window.matchMedia) return () => undefined;
+      const list = window.matchMedia(query);
+      list.addEventListener('change', onChange);
+      return () => list.removeEventListener('change', onChange);
+    },
+    [query]
+  );
+  return useSyncExternalStore(
+    subscribe,
+    () => typeof window !== 'undefined' && Boolean(window.matchMedia) && window.matchMedia(query).matches,
+    () => false
+  );
+}
+
+const TICKET_NUMBER_RE = /^\d{1,9}$/;
+
+/**
+ * A ticket number from a URL (`/support/$ticketId`, `?ticket=`; the router may already have
+ * parsed it to a number), else null: 1–9 digits, above 0. Anything else is "no such ticket".
+ */
+export function ticketNumberOf(value: unknown): number | null {
+  const text = typeof value === 'number' ? String(value) : typeof value === 'string' ? value : '';
+  if (!TICKET_NUMBER_RE.test(text)) return null;
+  const number = Number(text);
+  return number > 0 ? number : null;
+}

@@ -1,4 +1,4 @@
-import {type ReactNode, type Ref, type TextareaHTMLAttributes, useEffect, useState} from 'react';
+import {type ReactNode, type Ref, type TextareaHTMLAttributes, useEffect, useId, useState} from 'react';
 
 import {
   PRIORITY_LABELS,
@@ -10,11 +10,12 @@ import {
 } from '../../lib/helpdesk-tones';
 import {Badge, Person, StatusBadge} from './display';
 import {Icon} from './icon';
-import {Tabs} from './nav';
+import {Tabs, useRovingKeys} from './nav';
 
 /**
- * Help desk pieces: the ticket's details panel and the article editor.
- * Classes live in `src/styles/app.css` (`.ticket-meta`, `.article-editor`);
+ * Help desk pieces: the ticket's details panel, the article editor and the
+ * 1–5 rating a customer gives a solved request.
+ * Classes live in `src/styles/app.css` (`.ticket-meta`, `.article-editor`, `.rating-scale`);
  * colours come from `src/lib/helpdesk-tones.ts`, mapped once for every screen.
  */
 
@@ -189,6 +190,99 @@ export function ArticleEditor({
         <p className="article-editor-count" id={countId} data-near={near ? '' : undefined} aria-live={near ? 'polite' : undefined}>
           {value.length.toLocaleString()} / {maxLength.toLocaleString()} characters
         </p>
+      </div>
+      {error && (
+        <p className="field-error" id={`${id}-error`} role="alert">
+          {error}
+        </p>
+      )}
+    </div>
+  );
+}
+
+// ----------------------------------------------------------- rating scale --
+
+export type Rating = 1 | 2 | 3 | 4 | 5;
+
+/** What each score means, read out with its number ("4 out of 5, Good"). */
+export const RATING_WORDS: Record<Rating, string> = {1: 'Very poor', 2: 'Poor', 3: 'OK', 4: 'Good', 5: 'Great'};
+const RATINGS: Rating[] = [1, 2, 3, 4, 5];
+
+/**
+ * A 1–5 score (how did we do?): a labelled radio group of five square
+ * buttons, arrow keys move and pick, the low and high words under the ends.
+ * Controlled: `value` is null until the person picks. `SegmentedControl` is
+ * for two to four filters and `RadioCards` for explained choices; this is
+ * for a score.
+ *
+ * `id` lands on the group, so a screen can focus it
+ * (`document.getElementById(id)?.querySelector('button')?.focus()`).
+ */
+export function RatingScale({
+  label,
+  value,
+  onChange,
+  lowLabel = RATING_WORDS[1],
+  highLabel = RATING_WORDS[5],
+  disabled = false,
+  error,
+  id: givenId,
+}: {
+  /** What is rated ("Rate our help"), shown above the buttons. */
+  label: string;
+  value: number | null;
+  onChange: (value: Rating) => void;
+  /** Under the 1. */
+  lowLabel?: string;
+  /** Under the 5. */
+  highLabel?: string;
+  disabled?: boolean;
+  /** Why the score is missing, in words ("Pick a number from 1 to 5."). */
+  error?: string;
+  id?: string;
+}) {
+  const ownId = useId();
+  const id = givenId ?? ownId;
+  const index = value !== null && value >= 1 && value <= 5 ? value - 1 : -1;
+  const {refs, onKeyDown} = useRovingKeys(RATINGS.length, Math.max(index, 0), i => {
+    if (!disabled) onChange(RATINGS[i]!);
+  });
+  return (
+    <div className="rating-scale" data-invalid={error ? '' : undefined}>
+      <p className="rating-scale-label" id={`${id}-label`}>
+        {label}
+      </p>
+      <div
+        className="rating-scale-options"
+        role="radiogroup"
+        id={id}
+        aria-labelledby={`${id}-label`}
+        aria-describedby={error ? `${id}-error` : undefined}
+        aria-invalid={error ? true : undefined}
+        aria-disabled={disabled || undefined}
+        onKeyDown={disabled ? undefined : onKeyDown}>
+        {RATINGS.map((score, i) => (
+          <button
+            key={score}
+            ref={node => {
+              refs.current[i] = node;
+            }}
+            type="button"
+            role="radio"
+            className="rating-scale-option"
+            aria-checked={score === value}
+            aria-label={`${score} out of 5, ${RATING_WORDS[score]}`}
+            // One tab stop: the picked score, or the first while nothing is picked.
+            tabIndex={i === (index < 0 ? 0 : index) ? 0 : -1}
+            disabled={disabled}
+            onClick={() => onChange(score)}>
+            {score}
+          </button>
+        ))}
+      </div>
+      <div className="rating-scale-ends" aria-hidden="true">
+        <span>{lowLabel}</span>
+        <span>{highLabel}</span>
       </div>
       {error && (
         <p className="field-error" id={`${id}-error`} role="alert">

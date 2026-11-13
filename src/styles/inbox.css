@@ -1,0 +1,423 @@
+/*
+ * The staff inbox (`/dashboard/inbox`, src/portal/screens/inbox.tsx) and the
+ * Saved replies screen (`screens/canned.tsx`). Tokens only (docs/design-system.md),
+ * breakpoints 640 / 1024 / 1280. Loaded by src/layouts/App.astro after app.css.
+ *
+ * Layout: three panes from 1281px (list 320 · thread · details 300), two from
+ * 641 to 1280 (details in a Drawer), one at a time up to 640 (a back button).
+ * The route uses the shell's full layout (`data-layout="full"`), so the screen
+ * fills the area under the top bar and each pane scrolls on its own.
+ */
+
+/* ------------------------------------------------------------------ inbox -- */
+
+.screen-inbox {
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+  gap: 0;
+  height: 100%;
+  min-height: 0;
+}
+
+/* The lock screen for people without the inbox: a normal padded page. */
+.screen-inbox-locked {
+  padding: var(--space-6);
+}
+
+.screen-inbox-head {
+  display: grid;
+  gap: var(--space-4);
+  padding: var(--space-5) var(--space-6) var(--space-4);
+  border-bottom: 1px solid var(--line);
+  background: var(--card);
+}
+
+.screen-inbox-toolbar {
+  justify-content: flex-start;
+}
+
+.screen-inbox-panes {
+  display: grid;
+  grid-template-columns: 320px minmax(0, 1fr);
+  /* The details pane is a third column only when it is rendered (a ticket open at 1281px+):
+     with no ticket open there is no empty strip on the right. */
+  grid-auto-columns: 300px;
+  min-height: 0;
+}
+
+.screen-inbox-list {
+  min-height: 0;
+  overflow-y: auto;
+  border-right: 1px solid var(--line);
+  background: var(--card);
+}
+
+.screen-inbox-list ul {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.screen-inbox-list-state {
+  padding: var(--space-4);
+}
+
+.screen-inbox-list-state .notice-box {
+  margin-bottom: var(--space-3);
+}
+
+.screen-inbox-list .load-more {
+  padding: var(--space-3) var(--space-4);
+}
+
+.screen-inbox-tip {
+  margin: 0;
+  padding: var(--space-3) var(--space-4);
+  color: var(--subtle);
+  font-size: var(--text-xs);
+  line-height: var(--leading-xs);
+}
+
+.screen-inbox-tip kbd {
+  padding: 0 var(--space-1);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+}
+
+.screen-inbox-thread {
+  display: grid;
+  /* head · conversation (scrolls, the AI summary is its first item) · composer */
+  grid-template-rows: auto minmax(0, 1fr) auto;
+  grid-template-columns: minmax(0, 1fr);
+  min-width: 0;
+  min-height: 0;
+  background: var(--bg);
+}
+
+/* Nothing picked, a loading ticket, or an error: one centred block. */
+.screen-inbox-thread-state {
+  grid-row: 1 / -1;
+  align-self: center;
+  padding: var(--space-6);
+}
+
+.screen-inbox-thread-head {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-3);
+  padding: var(--space-4) var(--space-6);
+  border-bottom: 1px solid var(--line);
+  background: var(--card);
+}
+
+.screen-inbox-title {
+  flex: 1;
+  min-width: 0;
+}
+
+.screen-inbox-title h2 {
+  margin: 0;
+  font-size: var(--text-lg);
+  line-height: var(--leading-lg);
+  font-weight: var(--weight-semibold);
+  overflow-wrap: anywhere;
+}
+
+.screen-inbox-title h2:focus {
+  outline: none;
+}
+
+.screen-inbox-title h2:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: var(--space-0-5);
+  border-radius: var(--radius-sm);
+}
+
+.screen-inbox-subtitle {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2);
+  margin: var(--space-1) 0 0;
+  color: var(--muted);
+  font-size: var(--text-sm);
+  line-height: var(--leading-sm);
+}
+
+.screen-inbox-thread-actions {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.screen-inbox-summary {
+  margin-bottom: var(--space-5);
+}
+
+.screen-inbox-summary .card-body {
+  display: grid;
+  gap: var(--space-2);
+  justify-items: start;
+}
+
+.screen-inbox-summary-text {
+  display: -webkit-box;
+  overflow: hidden;
+  margin: 0;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 3;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.screen-inbox-summary-text[data-open] {
+  display: block;
+}
+
+.screen-inbox-summary-pending {
+  display: grid;
+  gap: var(--space-2);
+  width: 100%;
+}
+
+.screen-inbox-thread-body {
+  min-height: 0;
+  overflow-y: auto;
+  padding: var(--space-5) var(--space-6);
+}
+
+.screen-inbox-thread-body:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: calc(var(--space-0-5) * -1);
+}
+
+.screen-inbox-older {
+  display: flex;
+  justify-content: center;
+  margin-bottom: var(--space-4);
+}
+
+.screen-inbox-composer {
+  padding: var(--space-4) var(--space-6);
+  border-top: 1px solid var(--line);
+  background: var(--card);
+}
+
+.screen-inbox-details {
+  grid-row: 1;
+  grid-column: 3;
+  display: grid;
+  align-content: start;
+  gap: var(--space-4);
+  min-height: 0;
+  overflow-y: auto;
+  padding: var(--space-5);
+  border-left: 1px solid var(--line);
+  background: var(--card);
+}
+
+.screen-inbox-details-body {
+  display: grid;
+  gap: var(--space-4);
+}
+
+.screen-inbox-details-body .select,
+.screen-inbox-assignee {
+  width: 100%;
+}
+
+.screen-inbox-assignee {
+  display: grid;
+}
+
+.screen-inbox-details-body .ticket-page {
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+  overflow-wrap: anywhere;
+}
+
+/* "Status after sending" next to Saved replies: wide enough for its longest option
+   (Chrome sizes a select a little narrower than its text with our padding). The composer's
+   column and the tools' wrapping come from the kit (app.css `.composer`). */
+.screen-inbox-composer .composer-modes {
+  column-gap: var(--space-2);
+}
+
+.screen-inbox-composer .composer-tools select {
+  min-width: calc(var(--space-10) * 4);
+}
+
+/* A long customer name wraps in the details instead of being cut. */
+.screen-inbox-details-body .person-name,
+.screen-inbox-details-body .person-detail {
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+
+.screen-inbox-back,
+.screen-inbox-details-button {
+  display: none;
+}
+
+.screen-inbox .view-short {
+  display: none;
+}
+
+/* Saved replies picker (a Modal opened from the composer). */
+.screen-inbox-replies {
+  display: grid;
+  gap: var(--space-3);
+}
+
+.screen-inbox-replies ul {
+  display: grid;
+  gap: var(--space-1);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.screen-inbox-reply.button {
+  display: grid;
+  justify-items: start;
+  gap: var(--space-0-5);
+  height: auto;
+  min-height: var(--control);
+  padding-block: var(--space-2);
+  text-align: start;
+}
+
+.screen-inbox-reply-title {
+  font-weight: var(--weight-semibold);
+}
+
+.screen-inbox-reply-text {
+  display: block;
+  max-width: 100%;
+  overflow: hidden;
+  color: var(--muted);
+  font-weight: var(--weight-regular);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+@media (max-width: 1280px) {
+  .screen-inbox-panes {
+    grid-template-columns: 320px minmax(0, 1fr);
+  }
+
+  .screen-inbox-details-button {
+    display: inline-flex;
+  }
+}
+
+@media (max-width: 1024px) {
+  .screen-inbox-head,
+  .screen-inbox-thread-head,
+  .screen-inbox-thread-body,
+  .screen-inbox-composer {
+    padding-inline: var(--space-4);
+  }
+}
+
+@media (max-width: 640px) {
+  .screen-inbox-panes {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .screen-inbox-list {
+    border-right: 0;
+  }
+
+  .screen-inbox[data-pane='list'] .screen-inbox-thread {
+    display: none;
+  }
+
+  .screen-inbox[data-pane='thread'] .screen-inbox-list,
+  .screen-inbox[data-pane='thread'] .screen-inbox-head {
+    display: none;
+  }
+
+  .screen-inbox-back {
+    display: inline-flex;
+  }
+
+  .screen-inbox-tip {
+    display: none;
+  }
+
+  .screen-inbox .view-long {
+    display: none;
+  }
+
+  .screen-inbox .view-short {
+    display: inline;
+  }
+
+  .screen-inbox-toolbar .select {
+    flex: 1;
+  }
+
+  /* Tap targets: compact buttons are a full control tall on a phone. */
+  .screen-inbox .button.button-sm {
+    min-height: var(--control);
+  }
+
+  /* Reply / Note on its own line, the status choice and Saved replies under it. */
+  .screen-inbox-composer .composer-modes {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .screen-inbox-composer .composer-tools {
+    grid-column: 1;
+    grid-row: 2;
+    justify-content: flex-start;
+  }
+
+  .screen-inbox-locked {
+    padding: var(--space-4);
+  }
+}
+
+/* Touch screens have no J / K: no tip. */
+@media (hover: none) {
+  .screen-inbox-tip {
+    display: none;
+  }
+}
+
+/* ---------------------------------------------------------- saved replies -- */
+
+.screen-canned .canned-text {
+  min-width: 0;
+  max-width: 72ch;
+}
+
+.screen-canned .canned-body {
+  display: -webkit-box;
+  overflow: hidden;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+}
+
+.screen-canned .canned-body-field {
+  display: grid;
+  gap: var(--space-1);
+}
+
+.screen-canned .canned-count {
+  margin: 0;
+  justify-self: end;
+  color: var(--subtle);
+  font-size: var(--text-xs);
+  line-height: var(--leading-xs);
+  font-variant-numeric: tabular-nums;
+}
+
+.screen-canned .canned-count[data-near] {
+  color: var(--warning);
+  font-weight: var(--weight-medium);
+}

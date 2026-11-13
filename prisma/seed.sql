@@ -5,18 +5,22 @@
 --
 -- A help center for "Northwind Coffee Co.", a fictional coffee roaster: categories, articles
 -- (published, drafts, one archived), snippets, and the search chunks of every published article
--- and snippet, so search and the help center work straight after loading. Ids come from
+-- and snippet, so search and the help center work straight after loading, plus agents' saved
+-- replies. No conversations or tickets: they belong to users, and a seed has none. Ids come from
 -- subselects on the unique slugs, never hard-coded.
 BEGIN;
 
--- Stop when real data is there: this knowledge base is already in use.
+-- Stop when real data is there: this help desk is already in use (any conversation or ticket counts).
 DO $$
 BEGIN
   IF EXISTS (SELECT 1 FROM "kb_articles" WHERE "slug" NOT IN ('how-long-does-shipping-take', 'tracking-your-order', 'changing-or-cancelling-an-order', 'damaged-or-missing-items', 'international-shipping', 'how-coffee-subscriptions-work', 'pause-skip-or-change-delivery-date', 'change-coffee-or-grind-in-subscription', 'cancel-your-subscription', 'subscription-gift-options', 'pour-over-brewing-guide', 'french-press-brewing-guide', 'espresso-dial-in-basics', 'cold-brew-at-home', 'storing-coffee-beans-fresh', 'choosing-the-right-grind-size', 'cleaning-your-burr-grinder', 'grinder-not-grinding-troubleshooting', 'equipment-warranty', 'descaling-your-espresso-machine', 'update-payment-method', 'why-was-i-charged', 'refund-policy', 'reset-your-password', 'apply-a-discount-code', 'holiday-shipping-cutoffs', 'wholesale-accounts', 'loyalty-beans-program'))
      OR EXISTS (SELECT 1 FROM "kb_categories" WHERE "slug" NOT IN ('orders-shipping', 'subscriptions', 'brewing-guides', 'equipment-grinders', 'account-billing'))
      OR EXISTS (SELECT 1 FROM "kb_snippets" WHERE "question" NOT IN ('What are your customer support hours?', 'Do you sell decaf coffee?', 'Are your coffee bags recyclable or compostable?', 'How do I read the roast date on the bag?', 'What is the minimum order for free shipping?', 'Do you sell gift cards?', 'How much caffeine is in a cup of your coffee?', 'Can I pick up my order from the roastery?', 'Which payment methods do you accept?', 'Is your coffee organic and fairly traded?'))
-     OR EXISTS (SELECT 1 FROM "question_logs" WHERE "question" NOT IN ('How do I change the grind in my subscription?', 'How long does shipping take to Canada?', 'Do you sell decaf pods?', 'My grinder stopped working, what should I check?', 'I want a refund for my last bag, it tasted stale', 'Can I skip next month’s delivery?', 'Do you offer barista training classes?', 'What ratio should I use for a French press?', 'My espresso machine leaks water from the bottom', '¿Cómo puedo rastrear mi pedido?', 'Can I book a cupping session at the roastery?', 'How do I update my card?', 'Can I talk to a real person?', 'Do you sell matcha or loose-leaf tea?', 'How do I make cold brew at home?')) THEN
-    RAISE EXCEPTION 'prisma/seed.sql is sample data and this knowledge base is already in use. Nothing was changed.';
+     OR EXISTS (SELECT 1 FROM "question_logs" WHERE "question" NOT IN ('How do I change the grind in my subscription?', 'How long does shipping take to Canada?', 'Do you sell decaf pods?', 'My grinder stopped working, what should I check?', 'I want a refund for my last bag, it tasted stale', 'Can I skip next month’s delivery?', 'Do you offer barista training classes?', 'What ratio should I use for a French press?', 'My espresso machine leaks water from the bottom', '¿Cómo puedo rastrear mi pedido?', 'Can I book a cupping session at the roastery?', 'How do I update my card?', 'Can I talk to a real person?', 'Do you sell matcha or loose-leaf tea?', 'How do I make cold brew at home?'))
+     OR EXISTS (SELECT 1 FROM "helpdesk_canned_replies" WHERE "title" NOT IN ('Order delayed: we are checking with the carrier', 'Refund issued', 'Grind size tips for a sour or bitter cup'))
+     OR EXISTS (SELECT 1 FROM "conversations")
+     OR EXISTS (SELECT 1 FROM "tickets") THEN
+    RAISE EXCEPTION 'prisma/seed.sql is sample data and this help desk is already in use. Nothing was changed.';
   END IF;
 END $$;
 
@@ -1127,5 +1131,47 @@ WHERE NOT EXISTS (SELECT 1 FROM "question_logs" l WHERE l."question" = v."questi
 INSERT INTO "ai_usage" ("month", "spent_micros", "requests", "updated_at")
 VALUES (date_trunc('month', now())::date, 104660, 8, now())
 ON CONFLICT ("month") DO NOTHING;
+
+-- Saved replies agents insert into a ticket reply. created_by / updated_by 0: no user.
+-- No unique key: WHERE NOT EXISTS on the title.
+INSERT INTO "helpdesk_canned_replies" ("title", "body", "position", "created_by", "updated_by", "updated_at")
+SELECT v."title", v."body", v."position", 0, 0, now()
+FROM (VALUES
+  ('Order delayed: we are checking with the carrier',
+   'Hi there,
+
+Thanks for letting us know, and sorry your coffee hasn''t arrived yet. I''ve asked the carrier to look into your parcel and I''ll update you here as soon as they reply, usually within one business day.
+
+If the bag doesn''t turn up within three business days, we''ll roast and ship a replacement at no cost to you.
+
+Thanks for your patience,
+The Northwind team', 0),
+  ('Refund issued',
+   'Hi there,
+
+I''ve issued a full refund to the card you paid with. You''ll see it on your statement within 5–10 business days, depending on your bank.
+
+There''s no need to send anything back. If there''s anything else we can do, just reply here.
+
+Best,
+The Northwind team', 1),
+  ('Grind size tips for a sour or bitter cup',
+   'Hi there,
+
+Taste is the best guide to grind size:
+
+- Sour, thin or watery: grind a step or two finer, so the water extracts more.
+- Bitter, harsh or dry: grind a step or two coarser.
+
+Change one thing at a time, brew again, and taste. Our guide "Choosing the right grind size" in the help center has a chart for each brewer.
+
+Happy brewing,
+The Northwind team', 2)
+) AS v("title", "body", "position")
+WHERE NOT EXISTS (SELECT 1 FROM "helpdesk_canned_replies" c WHERE c."title" = v."title");
+
+-- Ticket tile counters (the migration creates them too; kept when present).
+INSERT INTO "helpdesk_counters" ("name", "value") VALUES ('unsolved', 0), ('waiting_on_us', 0)
+ON CONFLICT ("name") DO NOTHING;
 
 COMMIT;

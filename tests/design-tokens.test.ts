@@ -8,7 +8,7 @@ import {readFileSync} from 'node:fs';
 
 import {describe, expect, it} from 'vitest';
 
-const STYLESHEETS = ['src/styles/global.css', 'src/styles/app.css', 'src/styles/home.css', 'src/styles/help.css'];
+const STYLESHEETS = ['src/styles/global.css', 'src/styles/app.css', 'src/styles/home.css', 'src/styles/help.css', 'src/styles/inbox.css', 'src/styles/support.css'];
 const ASTRO_STYLES = [
   'src/pages/checkout/index.astro',
   'src/components/payments/BuyButton.astro',

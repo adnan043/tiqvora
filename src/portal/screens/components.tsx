@@ -1,4 +1,4 @@
-import {useState} from 'react';
+import {useRef, useState} from 'react';
 
 import {
   ArticleEditor,
@@ -10,6 +10,7 @@ import {
   Checkbox,
   CitationList,
   Composer,
+  type ComposerHandle,
   type ComposerMode,
   ConfidenceBadge,
   ConversationListItem,
@@ -30,6 +31,8 @@ import {
   Person,
   ProgressBar,
   RadioCards,
+  type Rating,
+  RatingScale,
   rules,
   SearchInput,
   SegmentedControl,
@@ -509,6 +512,10 @@ function ComposerDemo() {
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<string>();
   const [mode, setMode] = useState<ComposerMode>('reply');
+  // `handle`: the screen inserts a saved reply at the caret, or focuses the box (keyboard shortcuts).
+  const composer = useRef<ComposerHandle>(null);
+  // `initialText` + `onTextChange`: a draft kept outside (per ticket on the inbox, with `key`).
+  const draft = useRef('');
   const send = async (text: string, how: ComposerMode) => {
     setPending(true);
     setError(undefined);
@@ -536,6 +543,16 @@ function ComposerDemo() {
         error={error}
         maxLength={600}
         hint="Enter sends, Shift+Enter adds a line. Type “fail” to see an error."
+        tools={
+          <Button variant="ghost" size="sm" icon="zap" onClick={() => composer.current?.insert('Thanks for waiting, Maya. ')}>
+            Saved replies
+          </Button>
+        }
+        handle={composer}
+        initialText={draft.current}
+        onTextChange={text => {
+          draft.current = text;
+        }}
         onSend={send}
       />
       <Composer label="Your message" placeholder="Ask about your order…" disabled onSend={async () => {}} hint="Disabled: the ticket is closed." />
@@ -550,6 +567,45 @@ Coffee oils build up in the burrs over time. Clean them every 4 weeks.
 1. Unplug the grinder and empty the hopper.
 2. Run a cup of grinder-cleaning tablets through it.
 3. Grind 20 g of old beans to clear the residue.`;
+
+function RatingDemo() {
+  const [score, setScore] = useState<Rating | null>(null);
+  const [error, setError] = useState<string>();
+  const [sent, setSent] = useState(false);
+  return (
+    <Card title="Rating scale" description="RatingScale: a 1–5 score as a radio group. Arrow keys move; each option is read as “4 out of 5, Good”.">
+      <form
+        noValidate
+        className="form-stack"
+        onSubmit={event => {
+          event.preventDefault();
+          if (score === null) {
+            setError('Pick a number from 1 to 5.');
+            return;
+          }
+          setSent(true);
+        }}>
+        <RatingScale
+          label="Rate our help"
+          value={score}
+          onChange={value => {
+            setScore(value);
+            setError(undefined);
+            setSent(false);
+          }}
+          lowLabel="Very poor"
+          highLabel="Great"
+          error={error}
+        />
+        <div className="form-actions">
+          <Button type="submit">Send rating</Button>
+        </div>
+        {sent && score !== null && <Notice tone="success">Thanks for rating us {score} out of 5.</Notice>}
+      </form>
+      <RatingScale label="Disabled while it sends" value={4} onChange={() => undefined} disabled />
+    </Card>
+  );
+}
 
 function HelpdeskDemo() {
   const [status, setStatus] = useState<TicketStatus>('pending');
@@ -656,6 +712,7 @@ function HelpdeskKitDemo() {
       <Card title="Composer" description="Grows to six lines, then scrolls. Clears only after the send succeeds; a note sits on the warning fill.">
         <ComposerDemo />
       </Card>
+      <RatingDemo />
       <HelpdeskDemo />
     </div>
   );

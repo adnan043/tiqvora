@@ -1,9 +1,36 @@
 import {useInfiniteQuery, useQuery} from '@tanstack/react-query';
 import {Link} from '@tanstack/react-router';
 
-import {firstAuditQuery, firstUsersQuery, healthQuery, KB_DRAFTS, kbArticlesQuery, kbCategoriesQuery, siteQuery, twoFactorQuery} from '../queries';
+import {CUSTOMER_STATUS_LABELS} from '../../lib/helpdesk-tickets';
+import {TICKET_STATUS_TONES} from '../../lib/helpdesk-tones';
+import {
+  firstAuditQuery,
+  firstUsersQuery,
+  healthQuery,
+  helpdeskStatsQuery,
+  KB_DRAFTS,
+  kbArticlesQuery,
+  kbCategoriesQuery,
+  siteQuery,
+  supportTicketsQuery,
+  twoFactorQuery,
+} from '../queries';
 import {ago, pageCount, useMe, when} from '../shared';
-import {Badge, buttonClass, Card, EmptyState, ErrorNote, Icon, type IconName, LoadingBlock, Notice, PageHeader, ProgressBar, Stat} from '../ui';
+import {
+  Badge,
+  buttonClass,
+  Card,
+  EmptyState,
+  ErrorNote,
+  Icon,
+  type IconName,
+  LoadingBlock,
+  Notice,
+  PageHeader,
+  ProgressBar,
+  Stat,
+  StatusBadge,
+} from '../ui';
 
 /**
  * `/` of the dashboard: a greeting, what needs attention, stat tiles, a
@@ -14,6 +41,9 @@ import {Badge, buttonClass, Card, EmptyState, ErrorNote, Icon, type IconName, Lo
  * today, open orders), each from a first page or a counter kept on write.
  */
 const capitalise = (text: string) => text.charAt(0).toUpperCase() + text.slice(1);
+
+/** A help desk counter for a tile: "1,204"; '—' when it failed; null (a skeleton) while loading. */
+const tileValue = (value: number | undefined, failed: boolean) => (failed ? '—' : value === undefined ? null : value.toLocaleString('en'));
 
 export function Overview() {
   const me = useMe();
@@ -33,7 +63,20 @@ export function Overview() {
   const firstDrafts = drafts.data?.pages[0];
   const activity = useQuery({...firstAuditQuery, enabled: Boolean(abilities?.readAudit)});
   const recent = activity.data?.events.slice(0, 6) ?? [];
+  // The help desk: agents get three counters (kept on write, one primary-key read); everyone
+  // else, up to three of their own open requests from the first page of My support.
+  const isAgent = Boolean(abilities?.useInbox);
+  const tiles = useQuery({...helpdeskStatsQuery, enabled: isAgent});
+  const requests = useInfiniteQuery({...supportTicketsQuery, enabled: abilities !== undefined && !isAgent});
+  const openRequests = (requests.data?.pages[0]?.items ?? []).filter(request => request.status !== 'solved').slice(0, 3);
+  const tileHint = (hint: string) => (tiles.error ? "Couldn't load" : hint);
   const firstName = viewer?.name?.split(/\s+/)[0];
+  // Staff (any ability) see the site's numbers; a customer sees their own requests and account.
+  const isStaff = abilities ? Object.values(abilities).some(Boolean) : undefined;
+  // Pending = not solved and not waiting on us (the counters: unsolved = waiting + open + pending,
+  // waiting on us = waiting + open), so the tile matches the "Pending" view it opens.
+  const pendingCount = tiles.data ? Math.max(0, tiles.data.unsolved - tiles.data.waitingOnUs) : undefined;
+  const waiting = tiles.data?.waitingOnUs;
 
   // The checklist: only steps this person can do, each done from real data.
   const steps: {label: string; detail: string; done: boolean | undefined; to?: string; icon: IconName}[] = [
@@ -82,7 +125,11 @@ export function Overview() {
     <div className="app-page screen-overview">
       <PageHeader
         title={firstName ? `Welcome back, ${firstName}` : 'Welcome back'}
-        description={`Here is what is happening on ${site.data?.site?.name ?? 'your site'}.`}
+        description={
+          isStaff === false
+            ? 'Your requests to our support team, and your account.'
+            : `Here is what is happening on ${site.data?.site?.name ?? 'your site'}.`
+        }
         actions={
           <>
             <a className={buttonClass({variant: 'secondary'})} href="/">
@@ -107,6 +154,42 @@ export function Overview() {
       )}
 
       <div className="stat-grid">
+        {isAgent && (
+          <>
+            <Stat
+              label="Waiting on us"
+              icon="clock"
+              value={tileValue(waiting, Boolean(tiles.error))}
+              hint={tileHint(
+                waiting === undefined
+                  ? 'Customers waiting for a reply'
+                  : waiting === 0
+                    ? 'Nobody is waiting'
+                    : waiting === 1
+                      ? 'A customer is waiting for a reply'
+                      : 'Customers are waiting for a reply'
+              )}
+              to="/inbox"
+              search={{view: 'waiting'}}
+            />
+            <Stat
+              label="Pending"
+              icon="inbox"
+              value={tileValue(pendingCount, Boolean(tiles.error))}
+              hint={tileHint('Waiting on the customer')}
+              to="/inbox"
+              search={{view: 'pending'}}
+            />
+            <Stat
+              label="Solved this week"
+              icon="check-circle"
+              value={tileValue(tiles.data?.solvedThisWeek, Boolean(tiles.error))}
+              hint={tileHint('Since Monday')}
+              to="/inbox"
+              search={{view: 'solved'}}
+            />
+          </>
+        )}
         {abilities?.manageUsers && (
           <Stat
             label="Users"
@@ -134,13 +217,23 @@ export function Overview() {
             to="/articles"
           />
         )}
-        <Stat
-          label="Your access"
-          icon="shield"
-          value={me.data ? capitalise(me.data.roles.find(role => role !== 'member') ?? 'member') : null}
-          hint={me.data ? `${me.data.roles.length} role${me.data.roles.length === 1 ? '' : 's'}` : undefined}
-          to="/account"
-        />
+        {isStaff === false ? (
+          <Stat
+            label="Your requests"
+            icon="message-square"
+            value={requests.error ? '—' : (pageCount(requests.data?.pages[0]?.items.filter(r => r.status !== 'solved'), Boolean(requests.data?.pages[0]?.nextBefore)) ?? null)}
+            hint="Open conversations with our support team"
+            to="/support"
+          />
+        ) : (
+          <Stat
+            label="Your access"
+            icon="shield"
+            value={me.data ? capitalise(me.data.roles.find(role => role !== 'member') ?? 'member') : null}
+            hint={me.data ? `${me.data.roles.length} role${me.data.roles.length === 1 ? '' : 's'}` : undefined}
+            to="/account"
+          />
+        )}
         <Stat
           label="Sign-in"
           icon="lock"
@@ -148,6 +241,41 @@ export function Overview() {
           hint={twoFactor.data ? (twoFactor.data.enabled ? 'Two-step sign-in is on' : 'Two-step sign-in is off') : undefined}
         />
       </div>
+
+      {openRequests.length > 0 && (
+        <Card
+          title="Your requests"
+          description="Your open conversations with our support team."
+          flush
+          actions={
+            <Link className={buttonClass({variant: 'link'})} to="/support">
+              View all
+            </Link>
+          }>
+          <ul className="list">
+            {openRequests.map(request => (
+              <li key={request.number} className="list-row">
+                <span className="list-row-icon">
+                  <Icon name="message-square" size={16} />
+                </span>
+                <div className="list-row-text">
+                  <p className="list-row-title">
+                    <Link to="/support/$ticketId" params={{ticketId: String(request.number)}}>
+                      <span className="ticket-number">#{request.number}</span> {request.subject}
+                    </Link>
+                  </p>
+                  <p className="list-row-sub">
+                    <time dateTime={request.lastMessageAt}>Last update {ago(request.lastMessageAt)}</time>
+                  </p>
+                </div>
+                <span className="list-row-end">
+                  <StatusBadge tone={TICKET_STATUS_TONES[request.status]}>{CUSTOMER_STATUS_LABELS[request.status]}</StatusBadge>
+                </span>
+              </li>
+            ))}
+          </ul>
+        </Card>
+      )}
 
       <div className="grid-main-side">
         {abilities?.readAudit ? (

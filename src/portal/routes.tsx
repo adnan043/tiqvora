@@ -1,4 +1,4 @@
-import type {QueryClient} from '@tanstack/react-query';
+import {type QueryClient, useQuery} from '@tanstack/react-query';
 import {
   createRootRouteWithContext,
   createRoute,
@@ -13,6 +13,10 @@ import {
 } from '@tanstack/react-router';
 import {useEffect, useRef, useState} from 'react';
 
+import {isQuestionFilter, isReportRange, type QuestionFilter, type ReportRange} from '../lib/helpdesk-report-types';
+import {clearHelpdeskStorage} from '../lib/helpdesk-storage';
+import {QUEUES, type Queue, TICKET_PRIORITIES} from '../lib/helpdesk-tickets';
+import type {TicketPriority} from '../lib/helpdesk-tones';
 import type {Abilities} from '../lib/types';
 import {logout} from '../platform/browser';
 import {
@@ -20,7 +24,13 @@ import {
   firstAuditQuery,
   firstUsersQuery,
   healthQuery,
+  helpdeskQuestionsQuery,
+  helpdeskReportQuery,
   helpdeskSettingsQuery,
+  helpdeskStatsQuery,
+  inboxAgentsQuery,
+  inboxTicketQuery,
+  inboxTicketsQuery,
   KB_ALL_ARTICLES,
   KB_DRAFTS,
   kbArticlesQuery,
@@ -29,12 +39,16 @@ import {
   meQuery,
   permissionsQuery,
   rolesQuery,
+  savedRepliesQuery,
   sessionsQuery,
   siteQuery,
+  supportTicketQuery,
+  supportTicketsQuery,
+  supportUnreadQuery,
   twoFactorQuery,
   usersQuery,
 } from './queries';
-import {useMe, useSite} from './shared';
+import {ticketNumberOf, useMe, useSite} from './shared';
 import {
   Avatar,
   Button,
@@ -73,6 +87,17 @@ declare module '@tanstack/react-router' {
   interface StaticDataRouteOption {
     /** The screen's name: the top bar's `<h1>` and the tab's title. */
     title?: string;
+    /**
+     * `'full'`: the screen fills the whole area under the top bar, edge to edge, with no page
+     * padding or max width, and scrolls its own panes (the inbox). The shell sets
+     * `data-layout="full"` on `.app-shell` (src/styles/app.css, shell section).
+     */
+    layout?: 'full';
+    /**
+     * Who the full layout is for: a visitor whose `abilities[ability]` is false gets the normal
+     * layout (the screen shows them its "not for you" state in a normal page).
+     */
+    layoutAbility?: keyof Abilities;
   }
 }
 
@@ -113,7 +138,15 @@ export function RouteError({error}: ErrorComponentProps) {
   );
 }
 
-type NavItem = {to: string; label: string; icon: IconName; exact?: boolean; ability?: keyof Abilities};
+type NavItem = {
+  to: string;
+  label: string;
+  icon: IconName;
+  exact?: boolean;
+  ability?: keyof Abilities;
+  /** A count next to the label: `unread` = my requests with a reply I haven't seen. */
+  badge?: 'unread';
+};
 
 /**
  * The sidebar, in groups. `ability` hides an item the visitor may not use;
@@ -125,6 +158,8 @@ const NAV_GROUPS: {label: string; items: NavItem[]}[] = [
     label: 'Workspace',
     items: [
       {to: '/', label: 'Overview', icon: 'dashboard', exact: true},
+      // Not exact: `/support/1042` keeps it active.
+      {to: '/support', label: 'My support', icon: 'message-square', badge: 'unread'},
       {to: '/account', label: 'Your account', icon: 'user'},
     ],
   },
@@ -133,13 +168,18 @@ const NAV_GROUPS: {label: string; items: NavItem[]}[] = [
     items: [
       {to: '/articles', label: 'Articles', icon: 'file', ability: 'editKnowledge'},
       {to: '/categories', label: 'Categories', icon: 'menu', ability: 'editKnowledge'},
-      {to: '/snippets', label: 'Snippets', icon: 'zap', ability: 'editKnowledge'},
+      {to: '/snippets', label: 'Snippets', icon: 'layers', ability: 'editKnowledge'},
       {to: '/import', label: 'Import', icon: 'database', ability: 'editKnowledge'},
     ],
   },
   {
     label: 'Help desk',
-    items: [{to: '/assistant', label: 'Assistant', icon: 'zap', ability: 'manageHelpdesk'}],
+    items: [
+      {to: '/inbox', label: 'Inbox', icon: 'inbox', ability: 'useInbox'},
+      {to: '/saved-replies', label: 'Saved replies', icon: 'copy', ability: 'useInbox'},
+      {to: '/assistant', label: 'Assistant', icon: 'zap', ability: 'manageHelpdesk'},
+      {to: '/analytics', label: 'Analytics', icon: 'trending-up', ability: 'seeHelpdeskReports'},
+    ],
   },
   {
     label: 'Manage',
@@ -151,7 +191,7 @@ const NAV_GROUPS: {label: string; items: NavItem[]}[] = [
   },
   // Only in the Preview and `npm run dev` (never in a build): the UI kit, on screen.
   ...(import.meta.env.DEV
-    ? [{label: 'Build', items: [{to: '/components', label: 'Components', icon: 'layers' as const}]}]
+    ? [{label: 'Build', items: [{to: '/components', label: 'Components', icon: 'briefcase' as const}]}]
     : []),
 ];
 
@@ -160,6 +200,18 @@ function useScreenTitle() {
   const matches = useMatches();
   return [...matches].reverse().find(match => match.staticData.title)?.staticData.title ?? 'Dashboard';
 }
+
+/** The deepest route's `staticData.layout`, unless the visitor isn't who that layout is for. */
+function useScreenLayout(abilities: Abilities | undefined) {
+  const matches = useMatches();
+  const data = [...matches].reverse().find(match => match.staticData.layout)?.staticData;
+  if (!data?.layout) return undefined;
+  if (data.layoutAbility && abilities && !abilities[data.layoutAbility]) return undefined;
+  return data.layout;
+}
+
+/** The nav badge's text: "3", or "9+" (the server caps the count at 10). */
+const badgeCount = (count: number) => (count > 9 ? '9+' : String(count));
 
 /**
  * After every in-app navigation (never the first load): the tab title says
@@ -260,6 +312,9 @@ function Shell() {
   const [signingOut, setSigningOut] = useState(false);
   const viewer = me.data?.viewer;
   const abilities = me.data?.abilities;
+  const layout = useScreenLayout(abilities);
+  // My requests with a reply I haven't seen (the "My support" badge). Cheap: ≤ 10 ids, one index.
+  const unread = useQuery({...supportUnreadQuery, enabled: viewer?.state === 'user'});
   // Signed out meanwhile (or never signed in, in the editor Preview, where
   // the host page cannot see the session): go and sign in, then come back.
   const signedOut = viewer !== undefined && viewer.state !== 'user';
@@ -281,7 +336,7 @@ function Shell() {
   const name = siteName ?? 'My site';
   const logo = site.data?.site?.logo;
   return (
-    <div className="app-shell" data-nav-open={open ? '' : undefined}>
+    <div className="app-shell" data-nav-open={open ? '' : undefined} data-layout={layout}>
       <aside className="app-sidebar" aria-label="Sidebar">
         <a className="app-brand" href="/">
           <span className="app-brand-mark">{logo ? <img src={logo} alt="" /> : initials(name) || '·'}</span>
@@ -294,12 +349,21 @@ function Shell() {
             return (
               <div className="app-nav-group" key={group.label}>
                 <p className="app-nav-label">{group.label}</p>
-                {items.map(item => (
-                  <Link key={item.to} to={item.to} className="app-nav-link" activeOptions={{exact: item.exact ?? false}}>
-                    <Icon name={item.icon} size={18} />
-                    {item.label}
-                  </Link>
-                ))}
+                {items.map(item => {
+                  const count = item.badge === 'unread' ? (unread.data?.count ?? 0) : 0;
+                  return (
+                    <Link key={item.to} to={item.to} className="app-nav-link" activeOptions={{exact: item.exact ?? false}}>
+                      <Icon name={item.icon} size={18} />
+                      {item.label}
+                      {count > 0 && (
+                        <span className="app-nav-badge">
+                          {badgeCount(count)}
+                          <span className="visually-hidden"> with a new reply</span>
+                        </span>
+                      )}
+                    </Link>
+                  );
+                })}
               </div>
             );
           })}
@@ -355,12 +419,15 @@ function Shell() {
                     icon: 'log-out',
                     onSelect: () => {
                       setSigningOut(true);
-                      // The public chat keeps this tab's conversation; the next person on it mustn't see it.
+                      // The public chat keeps this tab's conversation, a hand-off in progress and
+                      // the last request's number; the next person on it mustn't see them.
+                      let storage: Storage | null = null;
                       try {
-                        sessionStorage.removeItem('hd:transcript');
+                        storage = sessionStorage;
                       } catch {
                         // Storage blocked: nothing was kept.
                       }
+                      clearHelpdeskStorage(storage);
                       void logout();
                     },
                   },
@@ -388,6 +455,8 @@ const overviewRoute = createRoute({
     const [me] = await Promise.all([queryClient.ensureQueryData(meQuery).catch(() => null), warm(queryClient.ensureQueryData(healthQuery), queryClient.ensureQueryData(twoFactorQuery), queryClient.ensureQueryData(siteQuery))]);
     const can = me?.abilities;
     await warm(
+      // Agents see the help desk tiles; everyone else, their own open requests.
+      can?.useInbox ? queryClient.ensureQueryData(helpdeskStatsQuery) : queryClient.ensureInfiniteQueryData(supportTicketsQuery),
       ...(can?.manageUsers ? [queryClient.ensureQueryData(firstUsersQuery)] : []),
       ...(can?.editKnowledge
         ? [queryClient.ensureQueryData(kbCategoriesQuery), queryClient.ensureInfiniteQueryData(kbArticlesQuery(KB_DRAFTS))]
@@ -453,6 +522,100 @@ const assistantRoute = createRoute({
   loader: ({context: {queryClient}}) => warm(queryClient.ensureQueryData(helpdeskSettingsQuery)),
   component: lazyRouteComponent(() => import('./screens/assistant'), 'Assistant'),
 });
+// Help desk analytics (holders of `site:helpdesk:reports`; the routes' guards enforce it).
+// The period and the question filter are in the URL (`/analytics?range=7d&filter=no_source`),
+// absent = the defaults (the last 4 weeks, every question); the loader warms what it shows.
+export type AnalyticsSearch = {range?: ReportRange; filter?: QuestionFilter};
+export const ANALYTICS_DEFAULTS = {range: '4w', filter: 'all'} as const satisfies Required<AnalyticsSearch>;
+
+/** Anything invalid or default is dropped, so the plain address is the default view. */
+export function parseAnalyticsSearch(search: Record<string, unknown>): AnalyticsSearch {
+  const out: AnalyticsSearch = {};
+  if (isReportRange(search.range) && search.range !== ANALYTICS_DEFAULTS.range) out.range = search.range;
+  if (isQuestionFilter(search.filter) && search.filter !== ANALYTICS_DEFAULTS.filter) out.filter = search.filter;
+  return out;
+}
+
+const analyticsRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: '/analytics',
+  staticData: {title: 'Analytics'},
+  validateSearch: parseAnalyticsSearch,
+  loaderDeps: ({search}) => ({range: search.range ?? ANALYTICS_DEFAULTS.range, filter: search.filter ?? ANALYTICS_DEFAULTS.filter}),
+  loader: async ({context: {queryClient}, deps}) => {
+    const me = await queryClient.ensureQueryData(meQuery).catch(() => null);
+    // Not allowed: the screen shows the API's refusal; nothing to fetch.
+    if (!me?.abilities.seeHelpdeskReports) return;
+    await warm(
+      queryClient.ensureQueryData(helpdeskReportQuery(deps.range)),
+      queryClient.ensureInfiniteQueryData(helpdeskQuestionsQuery(deps.filter))
+    );
+  },
+  component: lazyRouteComponent(() => import('./screens/analytics'), 'Analytics'),
+});
+// The help desk inbox (holders of `site:helpdesk:inbox`; the routes' guards enforce it).
+// Its state is in the URL, so a shared link opens exactly it: `/inbox?view=mine&ticket=1042`.
+export type InboxSearch = {view?: Queue; priority?: TicketPriority; ticket?: number};
+
+/** Anything invalid is dropped (unknown view → absent = "Waiting on us"). */
+export function parseInboxSearch(search: Record<string, unknown>): InboxSearch {
+  const out: InboxSearch = {};
+  if (QUEUES.includes(search.view as Queue)) out.view = search.view as Queue;
+  if (TICKET_PRIORITIES.includes(search.priority as TicketPriority)) out.priority = search.priority as TicketPriority;
+  const ticket = ticketNumberOf(search.ticket);
+  if (ticket !== null) out.ticket = ticket;
+  return out;
+}
+
+const inboxRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: '/inbox',
+  staticData: {title: 'Inbox', layout: 'full', layoutAbility: 'useInbox'},
+  validateSearch: parseInboxSearch,
+  loaderDeps: ({search}) => ({view: search.view, priority: search.priority, ticket: search.ticket}),
+  loader: async ({context: {queryClient}, deps}) => {
+    const me = await queryClient.ensureQueryData(meQuery).catch(() => null);
+    // Not an agent: the screen says so; nothing to fetch (the API would answer 403).
+    if (!me?.abilities.useInbox) return;
+    // The picked ticket loads in the background: picking one never waits on the router.
+    if (deps.ticket) void queryClient.prefetchQuery(inboxTicketQuery(deps.ticket));
+    await warm(
+      queryClient.ensureInfiniteQueryData(inboxTicketsQuery({view: deps.view, priority: deps.priority})),
+      queryClient.ensureQueryData(inboxAgentsQuery)
+    );
+  },
+  component: lazyRouteComponent(() => import('./screens/inbox'), 'Inbox'),
+});
+// The agents' saved replies (`site:helpdesk:inbox`): read and written by agents.
+const savedRepliesRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: '/saved-replies',
+  staticData: {title: 'Saved replies'},
+  loader: async ({context: {queryClient}}) => {
+    const me = await queryClient.ensureQueryData(meQuery).catch(() => null);
+    if (me?.abilities.useInbox) await warm(queryClient.ensureInfiniteQueryData(savedRepliesQuery('')));
+  },
+  component: lazyRouteComponent(() => import('./screens/canned'), 'CannedReplies'),
+});
+// My support: every signed-in person's OWN requests (the server scopes every read to them).
+const supportRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: '/support',
+  staticData: {title: 'My support'},
+  loader: ({context: {queryClient}}) => warm(queryClient.ensureInfiniteQueryData(supportTicketsQuery)),
+  component: lazyRouteComponent(() => import('./screens/support'), 'Support'),
+});
+const supportTicketRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: '/support/$ticketId',
+  staticData: {title: 'Your request'},
+  loader: ({context: {queryClient}, params}) => {
+    // A malformed number fetches nothing: the screen shows "We couldn't find this request".
+    const number = ticketNumberOf(params.ticketId);
+    return number === null ? undefined : warm(queryClient.ensureQueryData(supportTicketQuery(number)));
+  },
+  component: lazyRouteComponent(() => import('./screens/support'), 'SupportTicket'),
+});
 const usersRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: '/users',
@@ -497,6 +660,11 @@ export const routeTree = rootRoute.addChildren([
   snippetsRoute,
   importRoute,
   assistantRoute,
+  analyticsRoute,
+  inboxRoute,
+  savedRepliesRoute,
+  supportRoute,
+  supportTicketRoute,
   usersRoute,
   rolesRoute,
   activityRoute,

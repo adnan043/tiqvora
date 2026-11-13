@@ -102,6 +102,7 @@ export function Stat({
   hint,
   trend,
   to,
+  search,
   children,
 }: {
   label: ReactNode;
@@ -112,6 +113,8 @@ export function Stat({
   trend?: {label: string; direction: 'up' | 'down'; good?: boolean};
   /** A portal path: the whole tile links there. */
   to?: string;
+  /** The link's search params (`{view: 'waiting'}` → `/inbox?view=waiting`). Only with `to`. */
+  search?: Record<string, string>;
   /** A small chart under the number (`<Sparkline>`). */
   children?: ReactNode;
 }) {
@@ -141,7 +144,7 @@ export function Stat({
     </>
   );
   return to ? (
-    <Link className="stat stat-link" to={to}>
+    <Link className="stat stat-link" to={to} search={search}>
       {body}
     </Link>
   ) : (

@@ -1,8 +1,13 @@
 {
   "lists": {
-    "rate-windows-cleanup": {"retries": 2, "concurrency": 1}
+    "rate-windows-cleanup": {"retries": 2, "concurrency": 1},
+    "ticket-summaries": {"retries": 3, "concurrency": 2},
+    "ticket-summaries-sweep": {"retries": 1, "concurrency": 1},
+    "helpdesk-counters": {"retries": 2, "concurrency": 1}
   },
   "schedules": {
-    "rate-windows-cleanup": {"every": "hour", "label": "Delete old rate-limit counters"}
+    "rate-windows-cleanup": {"every": "hour", "label": "Delete old rate-limit counters"},
+    "ticket-summaries-sweep": {"cron": "*/15 * * * *", "label": "Summarize tickets the assistant missed"},
+    "helpdesk-counters": {"every": "day", "at": "04:00", "label": "Recount help desk tiles"}
   }
 }

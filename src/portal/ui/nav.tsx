@@ -1,7 +1,12 @@
 import {type KeyboardEvent, type ReactNode, useId, useRef} from 'react';
 
-/** Arrow keys move between the buttons of a group (tabs, segments), as screen reader users expect. */
-function useRovingKeys(count: number, index: number, pick: (index: number) => void) {
+/**
+ * Arrow keys move between the buttons of a group (tabs, segments, a rating
+ * scale), as screen reader users expect; Home / End jump to the ends. Give
+ * each button `ref={node => { refs.current[i] = node; }}`, `tabIndex` 0 on
+ * the selected one (-1 on the rest) and put `onKeyDown` on the group.
+ */
+export function useRovingKeys(count: number, index: number, pick: (index: number) => void) {
   const refs = useRef<(HTMLButtonElement | null)[]>([]);
   const onKeyDown = (event: KeyboardEvent) => {
     const step = {ArrowRight: 1, ArrowDown: 1, ArrowLeft: -1, ArrowUp: -1}[event.key];

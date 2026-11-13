@@ -243,6 +243,7 @@ const structured = indexable
       import {hydrateStaticPage} from '../platform/static-page';
       import {notifyPaymentOpener} from '../lib/checkout-session';
       import {installPageProgress} from '../lib/page-progress';
+      import {clearHelpdeskStorage} from '../lib/helpdesk-storage';
 
       installPageProgress();
 
@@ -284,9 +285,10 @@ const structured = indexable
         document.querySelectorAll<HTMLButtonElement>('[data-logout]').forEach(button =>
           button.addEventListener('click', () => {
             busy(button, 'Signing out…');
-            // The help chat's transcript belongs to this visitor: it never outlives the session.
+            // The help chat (transcript, hand-off, sent request) belongs to this visitor:
+            // it never outlives the session.
             try {
-              sessionStorage.removeItem('hd:transcript');
+              clearHelpdeskStorage(sessionStorage);
             } catch {
               // Storage blocked: nothing was kept.
             }
