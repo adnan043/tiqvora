@@ -639,6 +639,7 @@ function FilesScreen() {
 
 /** How much storage is left, and whether PDFs can be read. */
 function SpaceCard({usage, loading, failed}: {usage: KbFilesUsage | undefined; loading: boolean; failed: boolean}) {
+  const canSetUp = useMe().data?.abilities.manageHelpdesk === true;
   if (loading) {
     return (
       <Card title="Space">
@@ -648,7 +649,13 @@ function SpaceCard({usage, loading, failed}: {usage: KbFilesUsage | undefined; l
   }
   const pdfNote = usage?.pdfReady === false && (
     <Notice tone="info">
-      PDFs are read by the assistant, so they need its AI key and a monthly budget (Help desk › Assistant). Word, text and Markdown files work without it.
+      PDFs are read by the assistant, so they need its AI key and a monthly budget.{' '}
+      {canSetUp ? (
+        <Link to="/assistant">Set them up in Assistant</Link>
+      ) : (
+        'Ask someone who manages the Assistant settings to set them up'
+      )}
+      . Word, text and Markdown files work without it.
     </Notice>
   );
   if (failed || !usage || usage.storage === 'unavailable' || usage.storage === 'unreachable') {

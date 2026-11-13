@@ -3,7 +3,7 @@ import {Link} from '@tanstack/react-router';
 
 import type {WeekCount, WeeklyRow} from '../../../lib/helpdesk-report-types';
 import {helpdeskWeeksQuery} from '../../queries';
-import {useMe, when} from '../../shared';
+import {useMe, whenZoned} from '../../shared';
 import {BarChart, buttonClass, Card, type Column, DataTable, EmptyState, ErrorNote, LoadingBlock, Notice, SegmentedControl, Sparkline, Stat} from '../../ui';
 
 /**
@@ -82,16 +82,12 @@ export function TicketsTab({weeks, onWeeks}: {weeks: WeekCount; onWeeks: (next: 
       header: 'Rating',
       align: 'end',
       width: 'shrink',
-      hideOnMobile: true,
-      cell: row => <span className="analytics-number">{rating(row.csatSum, row.csatCount)}</span>,
-    },
-    {
-      key: 'ratings',
-      header: 'Ratings',
-      align: 'end',
-      width: 'shrink',
-      hideOnMobile: true,
-      cell: row => <span className="analytics-number">{number.format(row.csatCount)}</span>,
+      cell: row => (
+        <span className="analytics-number">
+          {rating(row.csatSum, row.csatCount)}
+          {row.csatCount > 0 && <span className="muted"> ({number.format(row.csatCount)})</span>}
+        </span>
+      ),
     },
   ];
 
@@ -188,7 +184,7 @@ export function TicketsTab({weeks, onWeeks}: {weeks: WeekCount; onWeeks: (next: 
 
           <Card
             title="Week by week"
-            description={`Newest first. Confirmed: the customer said it was solved. Assumed: the team marked it solved.${data.updatedAt ? ` Worked out ${when(data.updatedAt)}.` : ''}`}
+            description={`Newest first. Confirmed: the customer said it was solved. Assumed: the team marked it solved. Rating: the average, with how many ratings.${data.updatedAt ? ` Worked out ${whenZoned(data.updatedAt)}.` : ''}`}
             flush>
             <DataTable caption="Tickets week by week" columns={columns} rows={[...rows].reverse()} rowKey={row => row.week} />
           </Card>

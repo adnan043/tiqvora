@@ -3,7 +3,7 @@ import {Link} from '@tanstack/react-router';
 
 import {type ArticleRef, LOW_RATED_MIN_VOTES, type TopReport, type TopWeek} from '../../../lib/helpdesk-report-types';
 import {helpdeskTopQuery} from '../../queries';
-import {useMe, when} from '../../shared';
+import {useMe, whenZoned} from '../../shared';
 import {buttonClass, Card, type Column, DataTable, EmptyState, Icon, Notice, SegmentedControl} from '../../ui';
 
 /**
@@ -141,7 +141,7 @@ export function KnowledgeTab({week, onWeek}: {week: TopWeek; onWeek: (next: TopW
         Most-used counts questions whose best match was the article. Ratings are the article page’s thumbs, all time. Open issues are in
         Knowledge health.
         {data?.week && ` Week of ${longDay.format(new Date(`${data.week}T00:00:00Z`))}.`}
-        {data?.updatedAt && ` Worked out ${when(data.updatedAt)}.`}
+        {data?.updatedAt && ` Worked out ${whenZoned(data.updatedAt)}.`}
       </p>
 
       {/* `updatedAt` null = the nightly job has not worked this week out (an empty week it has
@@ -196,7 +196,7 @@ export function KnowledgeTab({week, onWeek}: {week: TopWeek; onWeek: (next: TopW
               notYet ? (
                 notYetState
               ) : (
-                <EmptyState icon="file" title={`No answers yet ${period}`} action={helpCenter}>
+                <EmptyState icon="file" title={week === 'current' ? 'No answers yet this week' : 'No answers last week'} action={helpCenter}>
                   Articles the assistant answers from show here.
                 </EmptyState>
               )

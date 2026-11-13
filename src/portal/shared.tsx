@@ -11,6 +11,15 @@ export const when = (iso: string | null) =>
     ? new Intl.DateTimeFormat('en-GB', {dateStyle: 'medium', timeStyle: 'short'}).format(new Date(iso))
     : '—';
 
+/** Like `when`, with the viewer's time zone named ("13 Nov 2026, 10:00 GMT+6"): for times
+ *  a nightly job set, read next to weeks that run in UTC. */
+export const whenZoned = (iso: string | null) =>
+  iso
+    ? new Intl.DateTimeFormat('en-GB', {day: 'numeric', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit', timeZoneName: 'short'}).format(
+        new Date(iso),
+      )
+    : '—';
+
 /** "3 min ago", "yesterday", "12 Oct": for activity feeds and "last seen". */
 export function ago(iso: string | null): string {
   if (!iso) return '—';
