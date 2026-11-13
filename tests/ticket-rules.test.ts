@@ -8,7 +8,7 @@ import {
   TICKET_LIMITS,
   ticketSubject,
 } from '../src/lib/helpdesk-tickets';
-import {solvedCounter, weekKey} from '../src/server/helpdesk/state';
+import {assumedCounter, confirmedCounter, solvedCounter, weekKey} from '../src/server/helpdesk/state';
 
 describe('weekKey (the solved-this-week counter)', () => {
   it('is the UTC Monday of the week, like Postgres date_trunc(week)', () => {
@@ -28,6 +28,18 @@ describe('weekKey (the solved-this-week counter)', () => {
   it('names a counter row that fits VARCHAR(32)', () => {
     expect(solvedCounter(weekKey())).toMatch(/^solved:\d{4}-\d{2}-\d{2}$/);
     expect(solvedCounter(weekKey()).length).toBeLessThanOrEqual(32);
+  });
+
+  it('names the resolution counters by the week, the same way (the SQL builds them as prefix || week)', () => {
+    expect(confirmedCounter('2026-11-09')).toBe('confirmed:2026-11-09');
+    expect(assumedCounter('2026-11-09')).toBe('assumed:2026-11-09');
+    for (const name of [confirmedCounter(weekKey()), assumedCounter(weekKey())]) {
+      expect(name).toMatch(/^(confirmed|assumed):\d{4}-\d{2}-\d{2}$/);
+      expect(name.length).toBeLessThanOrEqual(32);
+    }
+    // Within one prefix the names sort by date: the nightly prune compares them as text.
+    expect(confirmedCounter('2026-09-28') < confirmedCounter('2026-11-09')).toBe(true);
+    expect(assumedCounter('2025-12-29') < assumedCounter('2026-01-05')).toBe(true);
   });
 });
 

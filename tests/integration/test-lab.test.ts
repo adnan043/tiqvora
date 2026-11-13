@@ -6,7 +6,7 @@ import type {TestCaseRow, TestCasesPage, TestRunView} from '../../src/lib/test-l
 import {setCacheModeForTests} from '../../src/platform/cache';
 import {ensurePermissions} from '../../src/platform/permission-sync';
 import {inRequestScope} from '../../src/platform/request-scope';
-import {type ProviderResult, setAiProviderForTests} from '../../src/server/ai/provider';
+import {type ProviderMessage, type ProviderResult, setAiProviderForTests} from '../../src/server/ai/provider';
 import {app} from '../../src/server/app';
 import {runTestLabBatch} from '../../src/server/knowledge/test-lab';
 import {CATALOGUE, PERMISSIONS} from '../../src/server/permissions';
@@ -15,6 +15,10 @@ import {Browser, configureEnv, DATABASE_URL, db, ORIGIN, resetDatabase, resetHel
 
 /** Jobs the code sends are captured (never run inline); `refuse` makes the next sends fail as the platform would. */
 const sent = vi.hoisted(() => ({jobs: [] as {list: string; data: {runId: number; after: number}; options: Record<string, unknown>}[], refuse: false as false | string}));
+
+/** The assistant's prompt is plain text (no content blocks): narrow it. */
+const textOf = (content: ProviderMessage['content']): string => (typeof content === 'string' ? content : JSON.stringify(content));
+
 vi.mock('../../src/platform/background', async importOriginal => {
   const real = await importOriginal<typeof import('../../src/platform/background')>();
   return {
@@ -102,7 +106,7 @@ describe.skipIf(!DATABASE_URL)('Test Lab (integration, real Postgres, fake provi
     calls = [];
     reply = () => ({answer: 'Write to us within 30 days [1].', citations: [1], confidence: 'high', needsHuman: false, followUps: []});
     setAiProviderForTests(async (_key, req) => {
-      const last = req.messages[req.messages.length - 1]?.content ?? '';
+      const last = textOf(req.messages[req.messages.length - 1]?.content ?? '');
       calls.push(last);
       return ok(JSON.stringify(reply(last)));
     });
@@ -476,7 +480,7 @@ describe.skipIf(!DATABASE_URL)('Test Lab (integration, real Postgres, fake provi
     let inFlight = 0;
     let most = 0;
     setAiProviderForTests(async (_key, req) => {
-      const last = req.messages[req.messages.length - 1]?.content ?? '';
+      const last = textOf(req.messages[req.messages.length - 1]?.content ?? '');
       calls.push(last);
       inFlight++;
       most = Math.max(most, inFlight);

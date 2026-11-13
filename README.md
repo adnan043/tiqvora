@@ -2,9 +2,10 @@
 
 A help desk for one business, on one site: a public **help center** of articles, an **AI
 assistant** in a chat window that answers from those articles, a **hand-off to a person** when
-it can't, an **inbox** where your team answers, **analytics** on what customers ask, a weekly
-**knowledge health** check with article drafts for a person to review, and a **Test Lab** to try
-the assistant before customers do.
+it can't, an **inbox** where your team answers (with a **suggested reply** to edit), **analytics**
+on what customers ask and how tickets are solved, a weekly **knowledge health** check with article
+drafts for a person to review, **knowledge files** (PDF, Word, text) turned into draft articles,
+and a **Test Lab** to try the assistant before customers do.
 
 Built on the Web App template: [Astro](https://astro.build) pages, a [Hono](https://hono.dev)
 backend at `/site-api`, a React dashboard at `/dashboard`, and Postgres through
@@ -47,11 +48,43 @@ This file is for you, the site's owner, and for the AI agent that changes the si
    account), adds a note, and the conversation so far goes with it.
 5. **Your team answers in the Inbox**: queues, assignment, priority, internal notes, saved replies,
    an AI summary at the top of each ticket, and who else is looking at the same ticket.
+   **Suggest reply** (in the reply box's tools, for replies, not notes) asks the assistant for a draft answer
+   from your published articles: it **fills the composer only and is never sent**. The agent edits
+   it and presses Send. Under the composer it shows the articles it used and how sure it is. When
+   no article covers the question, it says so and writes nothing.
 6. **Customers follow the reply in My support** (`/dashboard/support`), reply back, mark it solved,
-   and rate it 1–5.
-7. **Analytics** shows how many questions came in, how many the assistant answered, which were
-   handed to a person or found no article, what customers rated helpful, and what it cost.
-8. **Knowledge health** lists what your help center is missing or getting wrong. A weekly check
+   and rate it 1–5. When your team marks a ticket solved, the customer sees "Our team marked this as
+   solved. Did it solve your problem?" and can press **Yes, it's solved** (within 14 days).
+7. **The Overview** (the dashboard's first screen) shows tiles, each only to people allowed to open
+   what it counts: **Open tickets** (and how many wait on you) and **Resolutions this week**
+   (confirmed and assumed, below) for agents; **AI answers this week**, **Hand-off rate** and **AI
+   spend this month** for people who see reports; Published articles and Drafts for editors who
+   see none of those; a customer's own open requests for everyone else. **Needs attention** lists
+   the 5 customers waiting longest (agents), then, for people who see reports, up to 6 things to
+   fix, most urgent first: the assistant is off, or the month's AI budget is used up or at 80 %
+   (these only for people who can change the Assistant settings); knowledge files that couldn't be
+   read (editors only); this week's questions that found no article; and open Knowledge health
+   gaps, low-rated and stale articles. Each links to where it is fixed.
+8. **Analytics** has three tabs:
+   - **Assistant**: how many questions came in, how many the assistant answered, which were handed
+     to a person or found no article, what customers rated helpful, and what it cost (7 days, 4 or
+     13 weeks), and the questions themselves.
+   - **Tickets** (last 4 or 13 weeks): tickets created, tickets solved (split into confirmed and
+     assumed), the median wait for a first reply (the last full week), and the **customer
+     rating**, with a chart and a week-by-week table.
+   - **Knowledge** (this week or last week): the most-asked questions that found no article, the
+     most-used articles, and the lowest-rated articles (5 or more votes, all time).
+
+   Weeks run Monday to Sunday, UTC. The Tickets and Knowledge numbers are worked out **once a
+   night** (04:00 UTC), so a new site shows them from the next day.
+
+   **Confirmed and assumed resolutions.** A solved ticket counts as **confirmed** when the customer
+   marked it solved, or confirmed an agent's solve with "Yes, it's solved". It counts as
+   **assumed** when an agent solved it and the customer hasn't confirmed: it stays provisional for
+   the **14 days** the customer can still reopen it (a reopened ticket leaves the count) or confirm
+   it (it moves to confirmed). Both count in the week the ticket was solved. The **customer
+   rating** (1–5) is shown on its own and never mixed into these counts.
+9. **Knowledge health** lists what your help center is missing or getting wrong. A weekly check
    runs every **Monday at 07:30 in your time zone** (Dashboard › Assistant › Weekly check) over the
    past 7 days and files:
    - **Gaps**: questions asked at least twice that found no article, or were answered with low
@@ -67,12 +100,25 @@ This file is for you, the site's owner, and for the AI agent that changes the si
    own draft article only if nobody edited it since; otherwise, and always for a published
    article, it makes a new draft. **Dismiss** hides the issue, and the same finding isn't flagged
    again for 90 days.
-9. **Article drafts from solved tickets.** When a ticket is solved (by an agent or the customer),
+10. **Article drafts from solved tickets.** When a ticket is solved (by an agent or the customer),
    the assistant reads the conversation and, if the agent explained something reusable, writes a
    draft (a new article, or an edit to the article it cited) and files it in Knowledge health as a
    gap or a conflict, "Found by: A solved ticket". A one-off fix gets no draft. Nothing is
    published without a person pressing Accept and then Publish.
-10. **Test Lab** (Dashboard › Test Lab): a list of questions your customers ask (up to 500; add
+11. **Knowledge files** (Dashboard › Files): upload a document you already have and get **draft
+    articles** from it, in the category you pick. Supported: **PDF** and **Word (.docx)** up to
+    **8 MB**, **text (.txt)** and **Markdown (.md)** up to **1 MB**. Each `# ` heading starts a
+    draft (with none, each `## ` heading; with neither, the whole file is one draft named after
+    it); long sections are cut into parts; at most **30 drafts** from one file. **PDFs are read by Claude Haiku 5.5**, a fixed model (not the one
+    you pick for answers), a few pages at a time, and need the AI key and a monthly budget. **Word,
+    text and Markdown files are read on the site itself**, with no AI call and no key needed (from
+    Word: headings, lists and tables; pictures, comments and footnotes are left out). The drafts
+    are **never published automatically**: they wait in Articles for a person to review and
+    publish. The list shows each file's state (waiting, reading with the page it's on, how many
+    drafts, failed with the reason, or **"Couldn't read"** when the stored file couldn't be
+    fetched) and what reading it cost. A failed or cancelled file can be tried again; deleting a
+    file keeps its drafts.
+12. **Test Lab** (Dashboard › Test Lab): a list of questions your customers ask (up to 500; add
     them one by one or paste up to 100 at a time), each expecting **an answer citing an article**
     (or any answer) or **a hand-off to a person**. **Run all** asks every question through the real
     assistant in the background, 10 at a time, and shows each answer, what it cited and whether
@@ -94,16 +140,20 @@ This file is for you, the site's owner, and for the AI agent that changes the si
 | My support (customer) | Dashboard › My support, `/dashboard/support/<number>` | `src/portal/screens/support.tsx`, `src/server/routes/support.ts` (`/helpdesk/my`) |
 | Inbox (staff) | Dashboard › Inbox | `src/portal/screens/inbox.tsx`, `src/portal/screens/inbox/ticket.tsx`, `src/server/routes/inbox.ts`, `src/server/helpdesk/state.ts` |
 | AI ticket summary | top of each ticket in the Inbox | `src/server/helpdesk/summary.ts` |
+| Suggest reply | Inbox › a ticket › Suggest reply | `src/portal/screens/inbox/ticket.tsx`, `POST /site-api/helpdesk/tickets/<number>/suggest` in `src/server/routes/inbox.ts`, `src/server/ai/suggest.ts` (what is sent, masking, limits) |
+| Confirmed / assumed resolutions | Overview, Analytics › Tickets, My support's "Yes, it's solved" | `src/server/helpdesk/state.ts` (`transition()`, `confirmResolution()`), the customer's solve in `src/server/routes/support.ts` |
 | Saved replies | Dashboard › Saved replies, and the picker in a ticket | `src/portal/screens/canned.tsx`, `src/portal/screens/inbox/saved-replies.tsx`, `src/server/routes/canned.ts` |
-| Analytics | Dashboard › Analytics | `src/portal/screens/analytics.tsx`, `src/server/routes/helpdesk-reports.ts`, `src/lib/helpdesk-report-types.ts` |
+| Analytics (Assistant, Tickets, Knowledge tabs) | Dashboard › Analytics | `src/portal/screens/analytics.tsx`, `src/portal/screens/analytics/tickets.tsx`, `analytics/knowledge.tsx`; `src/server/routes/helpdesk-reports.ts`, `src/lib/helpdesk-report-types.ts` |
+| Weekly ticket and knowledge numbers | nightly, 04:00 UTC | `src/server/helpdesk/weekly.ts` (run by the `helpdesk-counters` job) |
+| Knowledge files | Dashboard › Files | `src/portal/screens/files.tsx`, `src/server/routes/kb-files.ts` (`/site-api/kb/files`), `src/lib/kb-file-types.ts` (types and limits), `src/server/kb/sources/` (read, text, docx, pdf, split, pipeline) |
 | Knowledge health (issues, Accept, Dismiss, Write a draft) | Dashboard › Knowledge health | `src/portal/screens/knowledge-health.tsx`, `src/server/routes/knowledge-health.ts` (`/site-api/helpdesk/health`), `src/lib/knowledge-health-types.ts` |
 | The weekly check | background job, Mondays 07:30 your time | `src/server/knowledge/tick.ts` (starts it), `src/server/knowledge/health.ts` (finds the issues) |
 | Article drafts (solved tickets, Write a draft) | Knowledge health › an issue | `src/server/knowledge/drafts.ts` (the jobs), `src/server/ai/draft.ts` (what is sent, and the checks on what comes back) |
 | Accept → draft article | Knowledge health › an issue › Accept | `src/server/knowledge/accept.ts`, `src/server/kb/articles.ts` (the article write path, shared with the editors) |
 | Weekly check time zone | Dashboard › Assistant › Weekly check | `src/lib/time-zone.ts`, `src/server/routes/helpdesk-settings.ts` |
 | Test Lab | Dashboard › Test Lab | `src/portal/screens/test-lab.tsx`, `src/server/routes/test-lab.ts` (`/site-api/helpdesk/test-lab`), `src/server/knowledge/test-lab.ts` (the runs), `src/lib/test-lab.ts` (limits, import, score) |
-| AI spending for drafts and Test Lab | | `src/server/ai/spend.ts` (with `src/server/ai/usage.ts`) |
-| Overview tiles (open, waiting, solved this week) | Dashboard › Overview | `src/portal/screens/overview.tsx`, counters in `src/server/helpdesk/state.ts` |
+| AI spending for drafts, Test Lab, Suggest reply and PDF reading | | `src/server/ai/spend.ts` (with `src/server/ai/usage.ts`) |
+| Overview tiles and Needs attention | Dashboard › Overview | `src/portal/screens/overview.tsx`; ticket tiles from `GET /site-api/helpdesk/tickets/tiles` (`src/server/routes/inbox.ts`, counters in `src/server/helpdesk/state.ts`), AI tiles and health items from `GET /site-api/helpdesk/reports/overview` |
 | Roles and permissions | Dashboard › Roles, Users | `src/server/permissions.ts` |
 | Background jobs | the platform's scheduler | `background.json`, `src/server/background.ts` |
 | Colours, spacing, type | everywhere | `src/styles/global.css` (tokens), `docs/design-system.md` |
@@ -128,7 +178,8 @@ question, and offers "Talk to a person". The Assistant screen shows a warning un
 added. Hand-off, the Inbox and My support all work without the key; tickets just have no AI
 summary. The weekly Knowledge health check runs without the key (it makes no AI calls), but no
 drafts are written (solved tickets get none, and "Write a draft" asks for the key), and Test Lab
-can't run.
+can't run. Suggest reply asks for the key. Knowledge files: Word, text and Markdown files are read
+without it; PDFs can't be uploaded until it is there.
 
 ### The monthly spending cap
 
@@ -136,13 +187,18 @@ Dashboard › Assistant › Spending: a cap in US dollars per calendar month (UT
 **$20**. `0` turns the assistant off. The same screen shows this month's spend and number of AI
 answers.
 
-- Every AI call (chat answers, ticket summaries, article drafts and Test Lab runs) is counted
-  against the same cap before it runs. Once the month's spend reaches the cap, the assistant
-  behaves as if it were off until the next month or until you raise the cap; drafts stop, and a
-  Test Lab run stops with "Skipped: monthly AI limit reached".
+- Every AI call (chat answers, ticket summaries, article drafts, Test Lab runs, Suggest reply and
+  reading PDFs) is counted against the same cap before it runs. Once the month's spend reaches the
+  cap, the assistant behaves as if it were off until the next month or until you raise the cap;
+  drafts stop, a Test Lab run stops with "Skipped: monthly AI limit reached", Suggest reply says
+  the budget is used up, and a PDF being read stops with "This month's AI budget is used up".
 - There are also per-minute limits, so a burst can't spend the month in an hour: per visitor and
   for the whole site for chat answers; 10 drafts a minute for the whole site (solved-ticket drafts
-  and "Write a draft" together); 3 Test Lab batches a minute (30 questions).
+  and "Write a draft" together); 3 Test Lab batches a minute (30 questions); **Suggest reply** 6 a
+  minute per agent and 20 a minute for the whole site; **PDF reading** 10 AI calls a minute for the
+  whole site (a file over the limit waits a minute and goes on).
+- One knowledge file may spend at most **$0.50** on reading, over all its tries; a PDF that would
+  need more stops with "Split it into smaller files".
 - The cap limits what this site sends. Set a limit in your Anthropic account too.
 
 ### The models
@@ -153,7 +209,10 @@ answers.
 | Claude Sonnet 5.5 | "Fast and capable, about half the cost." | $2 / $10 |
 | Claude Haiku 5.5 | "The fastest and cheapest, for simple questions." | $0.10 / $0.50 |
 
-The list and prices are in `src/lib/ai-models.ts`. Only Anthropic models are offered.
+The list and prices are in `src/lib/ai-models.ts`. Only Anthropic models are offered. Suggest
+reply uses the model you pick. Reading PDFs always uses **Claude Haiku 5.5** (`EXTRACT_MODEL`),
+whatever you pick, with thinking turned off; each request stays under 90,000 input tokens (Haiku's
+price is higher above 100,000).
 
 ### What the assistant answers from
 
@@ -172,7 +231,20 @@ below it, the customer is handed to a person.
   website: every page is sent with `X-Frame-Options: DENY`, and the API answers no cross-site
   (CORS) requests.
 - **No website crawling.** The assistant knows only what you write, paste or import (Markdown
-  articles, a CSV of questions and answers). It never reads your other websites or files.
+  articles, a CSV of questions and answers) and the files you upload on the Files screen, once a
+  person has reviewed and published the drafts made from them. It never reads your other websites.
+- **Knowledge files** take PDF and Word files up to 8 MB and text or Markdown files up to 1 MB.
+  Each editor can upload 20 files in 24 hours, and 5 files can be read at once across the site.
+  A file gives at most 30 drafts (the rest is left out, with a note) and at most 200,000 characters
+  of text. A PDF must fit in one AI request (it is sent whole with every request), so a very long
+  or image-heavy PDF is refused with "Split it into smaller files"; only its first 80 pages are
+  read. The AI can get a PDF's words wrong: review every draft. Files need the platform's **Storage** turned on (with a storage pack); on your own
+  computer there is no Site Key, so uploads don't work there. A file not read within 2 hours is
+  marked failed; an upload never finished is removed after 2 hours.
+- **Suggest reply** drafts only from published articles (at most 180 words, in the language of the
+  customer's latest message), from the ticket's last 20 lines, and only for replies (not notes).
+  The customer's and agent's first names are filled in by the browser; a `[name]` left in the
+  draft stands for a name that was masked: replace it before sending.
 - **No email to customers.** Replies are not emailed. Customers see them in **My support**, with a
   count of unread replies in the dashboard menu. The only emails the site sends are account emails
   (sign-up codes, password resets), which the platform sends.
@@ -196,11 +268,13 @@ below it, the customer is handed to a person.
 
 ## Privacy
 
-- **The AI provider gets as little as it needs.** It gets the fixed instructions, the matching
-  help-center text and the customer's own words in this chat: never the customer's account, the name
-  or email address on it, an IP address or a cookie. Whatever else a customer types (a street
-  address, for example) is sent as typed, apart from the masking below. Ticket summaries get only the customer's and the assistant's chat lines,
-  never internal notes or agent replies.
+- **The AI provider (Anthropic) gets as little as each feature needs**, and never an account, an
+  IP address or a cookie. For a chat answer it gets the fixed instructions, the matching
+  help-center text and the customer's own words in this chat: never the name or email address on
+  the customer's account. Whatever else a customer types (a street address, for example) is sent
+  as typed, apart from the masking below. Ticket summaries get only the customer's and the
+  assistant's chat lines, never internal notes or agent replies. What Suggest reply, article
+  drafts, Test Lab and knowledge files send is below.
 - **Emails, phone numbers and card numbers a customer types are masked** before they go to the AI,
   into the question log, or into a ticket's chat transcript.
 - **Article drafts** send the model fixed instructions and: for a solved ticket, the customer's
@@ -211,6 +285,19 @@ below it, the customer is handed to a person.
   customers and visitors typed become `[link]`. Never an account, email address, ticket number
   or page path. What comes back is masked again, and keeps only links to this site or links that
   were already in the help-center text it was given.
+- **Suggest reply** sends the model fixed instructions, the ticket's subject, its last 20 lines
+  from the customer, your team and the assistant (the newest 8,000 characters, labelled only
+  "customer", "team" or "assistant"), and the matching help-center text. **Internal notes are
+  never sent.** Emails, phone numbers and card numbers are masked; the names of the ticket's
+  customer and agents are replaced with `[name]` (read only to mask them, never sent); links the
+  customer typed become `[link]`. Never an account, email address or ticket number. It writes
+  nothing to the ticket, the question log or the activity log.
+- **Knowledge files.** A **PDF is sent to Anthropic as it is, with no masking**: the whole file,
+  with every request, along with fixed instructions and the page numbers to read. Don't upload a
+  PDF holding anything you wouldn't send to Anthropic (customers' details, for example). Word,
+  text and Markdown files are read on the site and never sent to the AI. The file's name is never
+  sent. Files are kept private in the platform's storage; the job reads one through a 5-minute
+  link that is never saved or logged.
 - **Test Lab** sends the model what a customer's question would: the fixed instructions, the
   matching help-center text and the test question (masked the same way). Its questions and
   answers are kept only on the Test Lab screen, never in the question log.
@@ -235,6 +322,7 @@ below it, the customer is handed to a person.
 | Time zone of the weekly Knowledge health check (Mondays 07:30) | Dashboard › Assistant › Weekly check |
 | Test questions and what each expects | Dashboard › Test Lab |
 | Articles, categories, snippets | Dashboard › Knowledge base |
+| Draft articles from a PDF, Word, text or Markdown file | Dashboard › Files |
 | Saved replies (`{{customer.firstName}}` and `{{agent.firstName}}` are filled in) | Dashboard › Saved replies |
 | Who can do what | Dashboard › Roles, then give people roles in Users |
 | Site name, top navigation, home page and about words | `src/content/site.ts` |
@@ -243,16 +331,19 @@ below it, the customer is handed to a person.
 
 | Permission | Lets them | Given to |
 | --- | --- | --- |
-| `site:kb:edit` | write, publish, archive and import articles, categories and snippets | Admin, Support agent |
-| `site:helpdesk:inbox` | see and answer tickets, notes, assign, change status and priority, saved replies | Admin, Support agent |
-| `site:helpdesk:settings` | the Assistant screen and Test Lab | Admin |
-| `site:helpdesk:reports` | Analytics and Knowledge health (see issues, Dismiss, Write a draft); Accept also needs `site:kb:edit` | Admin |
+| `site:kb:edit` | write, publish, archive and import articles, categories and snippets; the **Files** screen (upload, try again, cancel, delete knowledge files); "files couldn't be read" in Needs attention | Admin, Support agent |
+| `site:helpdesk:inbox` | see and answer tickets, notes, assign, change status and priority, saved replies, **Suggest reply**; the Open tickets and Resolutions tiles and the longest-waiting tickets on the Overview | Admin, Support agent |
+| `site:helpdesk:settings` | the Assistant screen and Test Lab; the "assistant off" and budget items in Needs attention | Admin |
+| `site:helpdesk:reports` | **Analytics** (Assistant, Tickets and Knowledge tabs), the Overview's AI tiles and Needs attention, and Knowledge health (see issues, Dismiss, Write a draft); Accept also needs `site:kb:edit` | Admin |
 | `site:helpdesk:delete` | delete a ticket and its conversation | Admin |
 
 The **Support agent** role (Inbox and knowledge base, no settings, reports or deletes) is created
 by the database migration. The owner has every permission. Anyone else who signs up is a normal
 member: they can use the chat and My support only. Permissions are declared once, in
-`src/server/permissions.ts`.
+`src/server/permissions.ts`. The dashboard menu (`src/portal/routes.tsx`) shows each screen only
+to holders of its permission (Files: `site:kb:edit`; Analytics and Knowledge health:
+`site:helpdesk:reports`; Inbox: `site:helpdesk:inbox`; Assistant and Test Lab:
+`site:helpdesk:settings`), and the Site API checks it again on every request.
 
 ## Not included
 
@@ -275,26 +366,32 @@ for them, 15 sample questions for Analytics, 3 saved replies, and the assistant 
 visiting the roastery, and an added section on a leaking espresso machine for "Descaling your
 espresso machine or kettle"; and one stale article, "Using a discount or gift code") and **8 Test Lab questions**, never run: 6 expect an answer (2 of them
 with no expected article; "Do you sell matcha?" is a known gap, so it fails) and 2 expect a
-hand-off (a refund, and asking for a real person). No users, conversations or tickets. It stops without changing anything if the help desk is already in
-use, and it is safe to run twice. Never load it into your live database.
+hand-off (a refund, and asking for a real person). No users, conversations or tickets, so this
+week's resolution counters start at 0. No knowledge files (each needs a real uploaded file) and no
+weekly report rows: the nightly job writes them, so Analytics' Tickets and Knowledge tabs say
+"No weekly numbers yet" / "No rankings for this week yet" until it has run. It stops without changing anything if the help desk is already in
+use (your own articles, conversations, tickets, questions or any knowledge file), and it is safe to run twice. Never load it into your live database.
 
 ## Background jobs
 
 Declared in `background.json`, handled in `src/server/background.ts`:
 
-9 job lists and 4 schedules. `npm run platform -- jobs` checks that every list has a handler.
+11 job lists and 5 schedules. `npm run platform -- jobs` checks that every list has a handler.
+Schedules are in UTC.
 
 | Job (list) | When | What |
 | --- | --- | --- |
 | `ticket-summaries` | when a ticket is created and its summary couldn't be written at once | writes the AI summary (retried) |
 | `ticket-summaries-sweep` | every 15 minutes (schedule) | summarises tickets left without a summary (a job that was never sent) |
-| `helpdesk-counters` | daily, 04:00 (schedule) | recounts the Overview tiles, prunes old counters and "who's viewing" rows |
+| `helpdesk-counters` | daily, 04:00 (schedule) | recounts the Overview tiles, prunes old counters and "who's viewing" rows; then works out the weekly numbers for Analytics' Tickets and Knowledge tabs (`src/server/helpdesk/weekly.ts`): the last 3 weeks again (a ticket can be reopened or confirmed for 14 days), this and last week's rankings; deletes weekly rows older than 53 weeks |
 | `rate-windows-cleanup` | hourly (schedule) | deletes old rate-limit counters |
 | `knowledge-health-tick` | every 30 minutes (the `knowledge-health` schedule) | starts the weekly check once a week, as soon as it is Monday 07:30 in your time zone (a missed Monday still runs later that week); marks stalled checks, drafts and Test Lab runs failed; sends article drafts for solved tickets whose job never went out (15 minutes to 48 hours after the solve); deletes weekly-check records older than 26 weeks. Not retried: the next tick comes in 30 minutes. |
 | `knowledge-health` | sent by the tick, once a week | the weekly check: gaps, stale and low-rated articles. No AI calls. A big knowledge base goes on in a next job. |
 | `article-drafts` | sent when a ticket is solved (and by the tick) | the AI draft from one solved ticket, filed in Knowledge health (one per ticket) |
 | `health-drafts` | sent by "Write a draft" | the AI draft for one Knowledge health issue |
 | `test-lab` | sent by "Run all" | asks 10 test questions (4 at a time), saves the results, then sends the next 10 until the run is done |
+| `kb-extract` | sent when an upload on the Files screen is complete (and by the next step, and the sweep) | reads one knowledge file: Word, text and Markdown at once; a PDF a few pages per AI call, each step sending the next; then writes the draft articles and marks the file done, in one go. One file at a time. A file that can't be fetched from storage is marked "Couldn't read", with no retry. |
+| `kb-sources-sweep` | at :07, :22, :37 and :52 each hour (schedule) | sends again knowledge files whose reading stopped for 15 minutes, marks failed those idle for 2 hours, and removes uploads never completed after 2 hours |
 
 ## For your AI
 
@@ -304,15 +401,23 @@ Declared in `background.json`, handled in `src/server/background.ts`:
   and dashboard share one set of tokens and components (`src/portal/ui/`).
 - The tests describe how it must behave: `tests/` (unit: hand-off, ticket rules, reports, AI prompt
   and provider, AI drafts `ai-draft`, the Knowledge health tick `knowledge-tick`, Test Lab import
-  and score `test-lab-import` / `test-lab-score`, the weekly time zone `time-zone`, permissions,
-  design tokens) and `tests/integration/` (the real API on Postgres: kb, helpdesk, support, inbox,
-  reports, summaries, `article-drafts`, `knowledge-health-routes`, `knowledge-health-run`,
-  `test-lab`). Run `npm test`, and the integration tests as in [Tests](#tests).
+  and score `test-lab-import` / `test-lab-score`, the weekly time zone `time-zone`, Suggest reply
+  `suggest-reply`, knowledge files `kb-text` / `kb-docx` / `kb-split`, permissions, design tokens)
+  and `tests/integration/` (the real API on Postgres: kb, helpdesk, support, inbox, reports,
+  summaries, `article-drafts`, `knowledge-health-routes`, `knowledge-health-run`, `test-lab`,
+  `suggest-reply`, `resolution-counters` (confirmed / assumed), `helpdesk-weekly` (the nightly
+  weekly numbers), `kb-files` (the Files API) and `kb-extract` (the reading job)). Run `npm test`,
+  and the integration tests as in [Tests](#tests). The tests fake the platform's storage and the
+  AI: see [Knowledge files: live checks](#knowledge-files-live-checks).
 - Money and status changes are decided by the database in one statement (`src/server/ai/usage.ts`,
   `src/server/ai/spend.ts`, `src/server/helpdesk/state.ts`): keep it that way. New AI calls go
-  through `spend.ts`, so they count against the same monthly cap.
+  through `spend.ts`, so they count against the same monthly cap. The confirmed / assumed counters
+  move only in `state.ts` (`transition()`, `deleteTicket()`, `confirmResolution()`).
 - Nothing AI-written is ever published by the code: Knowledge health's Accept writes a **draft**
-  article only (`src/server/knowledge/accept.ts`). Keep it that way.
+  article only (`src/server/knowledge/accept.ts`), and knowledge files make **draft** articles only
+  (`src/server/kb/sources/pipeline.ts`). Keep it that way.
+- Suggest reply never sends: `src/server/ai/suggest.ts` writes no message, ticket, question log
+  or audit row, and internal notes are filtered out in its query. Keep it that way.
 - Never edit the template's own files (see [Building on it](#building-on-it)).
 
 ---
@@ -450,8 +555,9 @@ dashboard. On your computer nobody can press that, so you make a local admin:
    ```bash
    npm run dev-admin -- you@example.com
    ```
-4. Open (or reload) http://localhost:4321/dashboard/: the knowledge base, Inbox, Assistant,
-   Test Lab, Analytics, Knowledge health, Users, Roles and Activity are there.
+4. Open (or reload) http://localhost:4321/dashboard/: the knowledge base, Files, Inbox, Assistant,
+   Test Lab, Analytics, Knowledge health, Users, Roles and Activity are there (Files needs the
+   platform's storage, so uploads don't work on your computer).
 
 To try the customer side, sign up a second account in a private window: it gets the chat hand-off
 and My support only.
@@ -496,21 +602,27 @@ src/
   pages/                 also: index, about, blog/, account/, dashboard/, site-api/, sitemap, RSS
   layouts/Base.astro     public page frame; mounts the chat window
   portal/                the dashboard (React): routes.tsx, screens/, ui/ (the UI kit)
-  server/routes/         the API: kb, kb-manage, helpdesk, helpdesk-settings, support, inbox,
-                         canned, helpdesk-reports, knowledge-health, test-lab
+  portal/screens/        also: overview.tsx (tiles, Needs attention), analytics.tsx with
+                         analytics/ (Tickets, Knowledge tabs), files.tsx (knowledge files)
+  server/routes/         the API: kb, kb-manage, kb-files, helpdesk, helpdesk-settings, support,
+                         inbox, canned, helpdesk-reports, knowledge-health, test-lab
   server/ai/             the assistant: retrieve, prompt, provider, answer, usage (the cap),
                          draft (article drafts: input, masking, checks), spend (the cap for
-                         drafts and Test Lab)
+                         drafts, Test Lab, Suggest reply and PDFs), suggest (Suggest reply)
   server/knowledge/      Knowledge health and Test Lab jobs: tick (weekly start, clean-up),
                          health (the weekly check), drafts, accept, test-lab (the runs)
-  server/helpdesk/       ticket status changes and counters (state.ts), AI summaries (summary.ts)
+  server/helpdesk/       ticket status changes and counters (state.ts), AI summaries (summary.ts),
+                         the nightly weekly numbers for Analytics (weekly.ts)
   server/kb/             search, chunks, Markdown rendering, cached settings, articles (the
                          article write path)
+  server/kb/sources/     knowledge files: read (the stored file), text, docx, pdf (the AI
+                         reader), split (into drafts), pipeline (the jobs)
   server/background.ts   one handler per job list in background.json
   server/permissions.ts  every permission
   lib/                   shared types and browser code (the widget, hand-off, models, import,
-                         knowledge-health-types, test-lab, time-zone)
-  styles/                global.css (tokens), app.css (dashboard), inbox.css, support.css
+                         knowledge-health-types, test-lab, time-zone, kb-file-types)
+  styles/                global.css (tokens), app.css (dashboard), inbox.css, support.css,
+                         files.css, reports.css
   platform/              the template's managed core (auth, guards, platform calls): never edit
 ```
 
@@ -552,6 +664,45 @@ docker compose exec db createdb -U postgres site_test
 DATABASE_URL=postgresql://postgres:dev@localhost:5432/site_test npx prisma migrate deploy
 TEST_DATABASE_URL=postgresql://postgres:dev@localhost:5432/site_test npm test
 ```
+
+## Knowledge files: live checks
+
+Knowledge files (Dashboard › Files) are read by a background job: it asks the platform for a
+5-minute private link to the stored file (`fileUrl`) and downloads it with a timeout and a byte cap
+(`src/server/kb/sources/read.ts`). PDFs are then read by Claude Haiku 5.5 with thinking turned off
+(`src/server/kb/sources/pipeline.ts`). The tests fake the platform, the storage and the AI, so check
+these on a deployed site before relying on the feature. A throwaway job, or a temporary log line,
+is enough. Log only a link's host, never the link itself.
+
+1. **Where the link points.** The host of a `fileUrl()` link should be the storage, not this site's
+   own address (`/__platform/files/…`). The job refuses a link on the site's own host, and such a
+   file ends as "Couldn't read".
+2. **The download works from a job.** It should return `200` with the bytes: no `403 Egress blocked`
+   and no redirect loop. Note the status, `content-type`, `content-length` and whether a redirect
+   happened (the job follows one redirect to another https host).
+3. **Time and memory for an 8 MB PDF.** The download, the base64 copy and one AI call of up to 40 s
+   must fit inside the 60 s job run (a call stops 10 s before the run's 55 s budget, for the write
+   and the next step's send). Watch the Worker's memory: the bytes are dropped once their base64 is
+   built, so the base64 and the request body are what is in memory. `kb-extract` runs one job at a time.
+4. **The AI accepts the request.** Haiku 5.5 should accept `thinking: {type: 'disabled'}`, effort
+   `low`, `output_config.format` and a PDF `document` block, all in one request.
+5. **`count_tokens` accepts the same request** (the document block and `thinking`). Without it,
+   no PDF can start.
+6. **Storage problems end cleanly.** A file not yet completed (`E_FILE_NOT_READY`), Storage switched
+   off (`E_STORAGE_OFF`) and no storage pack (`E_STORAGE_NEEDS_PACK`) must each leave the file
+   "Couldn't read" on the Files screen. The job must not retry or fail in the Jobs tab.
+7. **In the Preview,** a 40-page PDF should finish. There, jobs run inside the upload's `waitUntil`
+   and each step sends the next one inline.
+8. **Viewing a PDF opens it in the browser.** On the Files screen, View on a PDF redirects to a
+   5-minute link whose response has the content type `application/pdf` (the type the upload was
+   given). Word, text and Markdown files always download.
+9. **A long PDF keeps going.** A PDF whose pages come back cut off (the pages per call go 4 → 2 → 1)
+   should still finish: each next step is sent under a new job key (`…-p2`, `…-p1`, or `…-t<time>`
+   after a run whose download used its time), never one the platform has already seen. A step that stalls is re-sent by the 15-minute sweep under its own
+   key (`…-s<n>`).
+
+If check 2 fails, the job can't read stored files. Text, Markdown and Word files could then be read
+in the browser and sent through the existing import, but PDFs could not be read at all.
 
 ## Staying up to date
 
@@ -600,7 +751,7 @@ The first merge lists every file that differs from that release: keep your side 
 | --- | --- | --- |
 | the chat says "Our assistant is resting" | no `ANTHROPIC_API_KEY`, the cap is 0, or this month's cap is used up | add the key (owner secret, or `.env` and restart locally); check Dashboard › Assistant › Spending |
 | the assistant never answers, always "couldn't find this" | nothing published matches the words of the question | publish articles or snippets in the customers' words; on a fresh database, `npm run db:seed` |
-| no Inbox, Assistant, Test Lab, Analytics or Knowledge health in the dashboard | your account lacks the permission | an admin gives you the role (Support agent or Admin) in Users |
+| no Inbox, Files, Assistant, Test Lab, Analytics or Knowledge health in the dashboard | your account lacks the permission | an admin gives you the role (Support agent or Admin) in Users |
 | `npm install` warns `EBADENGINE`, or `npm run setup` says Node.js is too old | Node.js below 22.12 | `nvm install 22`, then `nvm use 22` (or install 22.12+), then `npm install` again |
 | `docker compose up` says `Bind for 0.0.0.0:5432 failed: port is already allocated` | another Postgres already uses port 5432 | put `DB_PORT=5433` in `.env` (and `:5433` in `DATABASE_URL` if it is already set), then `docker compose up -d --wait db` and `npm run setup` |
 | `npm run setup` says `no database answers at localhost:5432` (or `ECONNREFUSED`) | the database isn't running, or Docker isn't | start Docker, then `docker compose up -d --wait db`, then `npm run setup` |
@@ -615,6 +766,8 @@ The first merge lists every file that differs from that release: keep your side 
 | `npm run dev` says port 4321 is in use, or opens another port | another dev server is running | use the address it prints, or stop the other one (`npx astro dev stop`) |
 | http://localhost:4321 shows a different project, or sign-up says "This form has expired" | another app already listens on 127.0.0.1:4321 | stop the other app, or run this one on a free port: `npx astro dev stop && npx astro dev --port 4322` |
 | the dashboard shows nothing for admins after `dev-admin` | the page was open before | reload `/dashboard/` |
+| a knowledge file says "Couldn't read" | the job couldn't fetch the stored file (storage off, no storage pack, the file not finished uploading, or a network problem) | check Storage in your platform dashboard, then **Try again** or upload it again; see [Knowledge files: live checks](#knowledge-files-live-checks) |
+| Analytics › Tickets says "No weekly numbers yet" | the nightly job (04:00 UTC) hasn't run since the site started | wait for the next night |
 
 ## FAQ
 

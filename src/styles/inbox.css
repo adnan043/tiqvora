@@ -250,6 +250,19 @@
   min-width: calc(var(--space-10) * 4);
 }
 
+/* Suggest reply (ticket.tsx): where the draft came from, or why there is none, under the box. */
+.screen-inbox-suggest {
+  margin-top: var(--space-3);
+}
+
+.screen-inbox-suggest .citation-list {
+  margin-top: var(--space-2);
+}
+
+.screen-inbox-suggest-error {
+  margin: var(--space-2) 0 0;
+}
+
 /* A long customer name wraps in the details instead of being cut. */
 .screen-inbox-details-body .person-name,
 .screen-inbox-details-body .person-detail {
@@ -361,8 +374,18 @@
     flex: 1;
   }
 
-  /* Tap targets: compact buttons are a full control tall on a phone. */
+  /* Tap targets: compact buttons are a full control tall on a phone; icon-only ones
+     (the suggestion's Dismiss) a full control wide too. */
   .screen-inbox .button.button-sm {
+    min-height: var(--control);
+  }
+
+  .screen-inbox .button-sm.icon-button {
+    min-width: var(--control);
+  }
+
+  /* Source links (thread and Suggest reply) are tapped on a phone: a full control tall. */
+  .screen-inbox .citation-link {
     min-height: var(--control);
   }
 

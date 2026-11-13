@@ -1682,6 +1682,48 @@
   color: var(--accent-ink);
 }
 
+/* A file picker inside a Field (`<input type="file" className="file-input">`): the kit's bordered box
+   (red when wrong) around a secondary-looking "Choose file" button, one control tall. */
+.field input.file-input {
+  height: auto;
+  min-height: var(--control);
+  padding: var(--space-1);
+  color: var(--muted);
+  font-size: var(--text-sm);
+  line-height: var(--leading-sm);
+  cursor: pointer;
+}
+
+input.file-input::file-selector-button {
+  min-height: var(--control-sm);
+  margin-inline-end: var(--space-3);
+  padding: 0 var(--space-3);
+  border: 1px solid var(--secondary-border);
+  border-radius: var(--radius-sm);
+  background: var(--secondary-bg);
+  color: var(--secondary-ink);
+  font: inherit;
+  font-size: var(--text-sm);
+  font-weight: var(--weight-semibold);
+  cursor: pointer;
+}
+
+input.file-input::file-selector-button:hover {
+  background: var(--hover);
+}
+
+input.file-input:disabled,
+input.file-input:disabled::file-selector-button {
+  cursor: not-allowed;
+}
+
+@media (max-width: 640px) {
+  /* Tap targets ≥ 40px on a phone. */
+  input.file-input::file-selector-button {
+    min-height: var(--control);
+  }
+}
+
 /* ------------------------------------------------------------- tabs -- */
 
 .tabs {

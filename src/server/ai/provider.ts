@@ -4,8 +4,9 @@
  * with `config.ownerSecret('ANTHROPIC_API_KEY')` (docs/agent/security.md › Calling other services).
  *
  * What is sent: the fixed system prompt, the customer's own words in this conversation and the
- * retrieved help-center text (src/server/ai/prompt.ts). Never an email, name, user id, IP or
- * cookie. Nothing here logs the key, the request body or the reply text: on a failure only a
+ * retrieved help-center text (src/server/ai/prompt.ts), or (knowledge files) one uploaded PDF as
+ * a base64 `document` block. Never an email, name, user id, IP or cookie. Nothing here logs the
+ * key, the request body (a document's base64 included) or the reply text: on a failure only a
  * short reason code.
  *
  * Fails closed: anything unexpected in the reply is `{ok: false, reason: 'shape'}`, and the
@@ -13,6 +14,7 @@
  */
 
 const ANTHROPIC_MESSAGES_URL = 'https://api.anthropic.com/v1/messages';
+const ANTHROPIC_COUNT_TOKENS_URL = 'https://api.anthropic.com/v1/messages/count_tokens';
 const ANTHROPIC_VERSION = '2026-10-21';
 /** Only sent with `fallbacks` (the `"default"` scalar form needs this beta). */
 const ANTHROPIC_FALLBACK_BETA = 'server-side-fallback-2026-07-01';
@@ -36,9 +38,15 @@ export const ANSWER_SCHEMA = {
   },
 } as const;
 
+/** One content block of a message: text, or a PDF sent inline as base64 (no newlines in `data`). */
+export type ContentBlock =
+  | {type: 'text'; text: string}
+  | {type: 'document'; source: {type: 'base64'; media_type: 'application/pdf'; data: string}};
+
 export interface ProviderMessage {
   role: 'user' | 'assistant';
-  content: string;
+  /** A plain string, or blocks (a document block goes before the text that asks about it). */
+  content: string | ContentBlock[];
 }
 
 export interface ProviderRequest {
@@ -53,6 +61,12 @@ export interface ProviderRequest {
   maxTokens?: number;
   /** How long to wait for the provider, in ms. Default: TIMEOUT_MS (10 s). */
   timeoutMs?: number;
+  /**
+   * Default: omitted (the model's default: adaptive on every current model). Extraction sends
+   * `{type: 'disabled'}` (Claude Haiku 5.5 accepts it at effort ≤ high; we send `low`).
+   * Never `disabled` on Claude Opus 5.5 or Sonnet 5.5: a 400 there.
+   */
+  thinking?: {type: 'disabled'} | {type: 'adaptive'};
 }
 
 /** One model run inside the call: the requested one, then each server-side fallback. */
@@ -106,7 +120,10 @@ function positiveInt(value: number | undefined, fallback: number): number {
   return typeof value === 'number' && Number.isSafeInteger(value) && value > 0 ? value : fallback;
 }
 
-/** The request body (exported for the provider's unit test). No `temperature` / `thinking`: defaults. */
+/**
+ * The request body (exported for the provider's unit test). No `temperature` (a 400 on this API
+ * version); `thinking` only when the caller sets it, else the model's default.
+ */
 export function requestBody(req: ProviderRequest): Record<string, unknown> {
   return {
     model: req.model,
@@ -114,20 +131,25 @@ export function requestBody(req: ProviderRequest): Record<string, unknown> {
     system: req.system,
     messages: req.messages,
     output_config: {effort: 'low', format: {type: 'json_schema', schema: req.schema ?? ANSWER_SCHEMA}},
+    ...(req.thinking ? {thinking: req.thinking} : {}),
     // A policy refusal retried on the provider's default fallback model, in the same call.
     // Never for a model without them (Claude Haiku 5.5: a 400).
     ...(req.serverFallback ? {fallbacks: 'default'} : {}),
   };
 }
 
-async function realCall(key: string, req: ProviderRequest): Promise<ProviderResult> {
-  if (typeof key !== 'string' || key.trim() === '') return fail('http', 'no_key');
-
-  const headers: Record<string, string> = {
+function baseHeaders(key: string): Record<string, string> {
+  return {
     'x-api-key': key.trim(),
     'anthropic-version': ANTHROPIC_VERSION,
     'content-type': 'application/json',
   };
+}
+
+async function realCall(key: string, req: ProviderRequest): Promise<ProviderResult> {
+  if (typeof key !== 'string' || key.trim() === '') return fail('http', 'no_key');
+
+  const headers = baseHeaders(key);
   if (req.serverFallback) headers['anthropic-beta'] = ANTHROPIC_FALLBACK_BETA;
 
   let raw: string;
@@ -235,4 +257,84 @@ function readMessage(data: unknown, requestedModel: string): ProviderResult | nu
     stopReason: typeof stopReason === 'string' ? stopReason : null,
     refused: stopReason === 'refusal',
   };
+}
+
+// ---------------------------------------------------------------------------------------------
+// Token counting (free): `POST /v1/messages/count_tokens`, the same model / system / messages /
+// thinking as the call that will follow. No `output_config` (not verified on this endpoint): the
+// caller adds a margin for the schema. Same fixed origin, headers, no-redirect and no-log rules.
+
+export type CountTokensRequest = {
+  model: string;
+  system: string;
+  messages: ProviderMessage[];
+  thinking?: ProviderRequest['thinking'];
+  /** Default: TIMEOUT_MS (10 s). */
+  timeoutMs?: number;
+};
+
+export type CountTokensResult = {ok: true; inputTokens: number} | {ok: false; reason: ProviderFailure};
+
+export type CountTokensFn = (key: string, req: CountTokensRequest) => Promise<CountTokensResult>;
+
+let countTokensForTests: CountTokensFn | null = null;
+
+/** TESTS ONLY: replace token counting with a fake (null restores the real call). */
+export function setCountTokensForTests(fn: CountTokensFn | null): void {
+  countTokensForTests = fn;
+}
+
+/** Input tokens of a request, as the provider counts them. Never throws. */
+export function countTokens(key: string, req: CountTokensRequest): Promise<CountTokensResult> {
+  if (countTokensForTests) return countTokensForTests(key, req);
+  return realCount(key, req);
+}
+
+function countFail(reason: ProviderFailure, detail?: string | number): CountTokensResult {
+  console.warn(`[ai] anthropic count_tokens ${reason}${detail === undefined ? '' : ` ${detail}`}`);
+  return {ok: false, reason};
+}
+
+/** The count_tokens body (exported for the provider's unit test). */
+export function countTokensBody(req: CountTokensRequest): Record<string, unknown> {
+  return {
+    model: req.model,
+    system: req.system,
+    messages: req.messages,
+    ...(req.thinking ? {thinking: req.thinking} : {}),
+  };
+}
+
+async function realCount(key: string, req: CountTokensRequest): Promise<CountTokensResult> {
+  if (typeof key !== 'string' || key.trim() === '') return countFail('http', 'no_key');
+
+  let raw: string;
+  try {
+    const res = await fetch(ANTHROPIC_COUNT_TOKENS_URL, {
+      method: 'POST',
+      headers: baseHeaders(key),
+      body: JSON.stringify(countTokensBody(req)),
+      redirect: 'manual',
+      signal: AbortSignal.timeout(positiveInt(req.timeoutMs, TIMEOUT_MS)),
+    });
+    if (!res.ok) {
+      res.body?.cancel().catch(() => {});
+      return countFail('http', res.status);
+    }
+    raw = await res.text();
+  } catch (error) {
+    const name = error instanceof Error ? error.name : '';
+    if (name === 'TimeoutError' || name === 'AbortError') return countFail('timeout');
+    return countFail('network');
+  }
+
+  if (raw.length > 10_000) return countFail('shape', 'too_large');
+  let data: unknown;
+  try {
+    data = JSON.parse(raw);
+  } catch {
+    return countFail('shape', 'json');
+  }
+  if (!isObject(data) || !isCount(data.input_tokens)) return countFail('shape');
+  return {ok: true, inputTokens: data.input_tokens};
 }

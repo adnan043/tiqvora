@@ -1,7 +1,8 @@
 import {useMutation, useQuery, useQueryClient} from '@tanstack/react-query';
+import {Link} from '@tanstack/react-router';
 import {type ReactNode, type RefObject, useEffect, useLayoutEffect, useMemo, useRef, useState} from 'react';
 
-import type {Agent, CannedReply, StaffTicket, ThreadMessage, TicketPriority, TicketStatus} from '../../../lib/helpdesk-tickets';
+import type {Agent, CannedReply, SourceLink, StaffTicket, SuggestReply, ThreadMessage, TicketPriority, TicketStatus} from '../../../lib/helpdesk-tickets';
 import {TICKET_LIMITS} from '../../../lib/helpdesk-tickets';
 import {type Confidence, PRIORITY_LABELS, TICKET_STATUS_LABELS, TICKET_STATUS_TONES} from '../../../lib/helpdesk-tones';
 import {api, ApiError, read} from '../../api';
@@ -20,6 +21,7 @@ import {
   Drawer,
   EmptyState,
   ErrorNote,
+  Icon,
   IconButton,
   LoadingBlock,
   Menu,
@@ -55,12 +57,38 @@ const REPLY_HINTS: Record<AfterSend, string> = {
   open: 'The customer sees your reply in My support. The ticket stays Open.',
   solved: 'The customer sees your reply in My support. Sending marks the ticket Solved.',
 };
-const NOTE_HINT = 'Only your team sees notes.';
+const NOTE_HINT = 'Only your team sees notes. Suggest reply works for replies.';
 /** The hand-off's assistant lines are what the customer's browser sent: shown as such. */
 const AI_COPY_LABEL = "Assistant (customer's copy, not verified)";
 
 const CHANGED = "Someone else changed this ticket. It's been refreshed.";
 const NO_ACCESS = 'You no longer have access to the inbox.';
+
+/** What "Suggest reply" left under the composer: the draft's sources, or why there is none. */
+type Suggestion = {kind: 'ready'; citations: SourceLink[]; confidence: 'high' | 'medium' | 'low'} | {kind: 'no_source'};
+
+const NO_SOURCE_TEXT = 'No published article covers this. Write the reply yourself.';
+
+/** What a suggested draft is, in words: shown under the box and announced once. */
+function draftAddedText(n: number, confidence: 'high' | 'medium' | 'low'): string {
+  return (
+    `Draft added to the reply from ${n} ${n === 1 ? 'article' : 'articles'}. Check it before sending.` +
+    (confidence === 'low' ? ' The assistant is not sure it answers the question.' : '')
+  );
+}
+
+/** "Suggest reply" failing, in words, next to the button (by the server's `code`, never its text). */
+export function describeSuggestError(err: unknown): string {
+  if (err instanceof ApiError) {
+    if (err.code === 'ai_off') return 'Suggest reply needs the assistant: add an AI key and a monthly budget in Assistant settings.';
+    if (err.code === 'ai_cap') return "This month's AI budget is used up. Write the reply yourself.";
+    if (err.code === 'rate_limited' || err.status === 429) return 'Too many suggestions in a minute. Wait a moment and try again.';
+    if (err.code === 'ai_failed') return "The assistant couldn't write a draft this time. Try again, or write the reply yourself.";
+    if (err.status === 404) return 'This ticket no longer exists.';
+    if (err.status === 403) return NO_ACCESS;
+  }
+  return "Couldn't get a suggestion. Check your connection and try again.";
+}
 
 /** Message ids are BigInts as strings: a longer id is a newer one. */
 const byId = (a: ThreadMessage, b: ThreadMessage) => a.id.length - b.id.length || (a.id < b.id ? -1 : a.id > b.id ? 1 : 0);
@@ -331,6 +359,7 @@ export function TicketView({
             }
           : old
       );
+      if (vars.kind === 'reply') setSuggestion(null);
       if (vars.kind === 'reply' && vars.setStatus === 'solved') toast.success(`Reply sent. Ticket #${number} marked solved.`);
       else announce(vars.kind === 'note' ? 'Note added.' : 'Reply sent.');
       setAfterSend('pending');
@@ -375,6 +404,46 @@ export function TicketView({
     focusComposerAfterClose.current = true;
     setRepliesOpen(false);
   };
+
+  // ------------------------------------------------------------ suggest --
+  // Never sends anything: the draft only goes INTO the composer, at the caret; the agent reads,
+  // edits and presses Send (the suggest route has no write path to the thread).
+  const [suggestion, setSuggestion] = useState<Suggestion | null>(null);
+  const [suggestError, setSuggestError] = useState<string | undefined>();
+  const modeNow = useRef(mode);
+  modeNow.current = mode;
+  // Suggest reply is for replies: switching to Note clears its last error (it is about a reply).
+  useEffect(() => {
+    if (mode === 'note') setSuggestError(undefined);
+  }, [mode]);
+  const suggest = useMutation({
+    mutationFn: (requested: number) =>
+      read<SuggestReply>(api.helpdesk.tickets[':number'].suggest.$post({param: {number: String(requested)}, json: {mode: 'reply'}})),
+    onMutate: () => {
+      setSuggestError(undefined);
+      setSuggestion(null);
+    },
+  });
+  // The outcome is handled in mutate()'s own callbacks, which never run once this view has
+  // unmounted: `composerRef` is the inbox's, so after a switch it points at ANOTHER ticket's box.
+  // The ticket asked for is checked too, so a draft only ever lands in its own ticket's reply.
+  const requestSuggestion = () =>
+    suggest.mutate(number, {
+      onSuccess: (res, requested) => {
+        if (requested !== number) return;
+        if (res.status === 'no_source') {
+          setSuggestion({kind: 'no_source'});
+          announce(NO_SOURCE_TEXT);
+          return;
+        }
+        // Switched to Note while it was being written: never put a customer reply into a note.
+        if (modeNow.current !== 'reply') return setSuggestError('The draft was not added because you switched to Note. Switch to Reply and try again.');
+        composerRef.current?.insert(fillPlaceholders(res.reply, {customer: t?.customer.name ?? '', agent: myName}));
+        setSuggestion({kind: 'ready', citations: res.citations, confidence: res.confidence});
+        announce(draftAddedText(res.citations.length, res.confidence));
+      },
+      onError: err => setSuggestError(describeSuggestError(err)),
+    });
 
   // ------------------------------------------------------------ render --
   if (ticketQuery.isPending) {
@@ -612,6 +681,16 @@ export function TicketView({
                     options={AFTER_SEND_OPTIONS}
                   />
                 )}
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  icon="sparkles"
+                  pending={suggest.isPending}
+                  pendingLabel="Drafting…"
+                  disabled={mode === 'note' || send.isPending}
+                  onClick={requestSuggestion}>
+                  Suggest reply
+                </Button>
                 <Button variant="ghost" size="sm" icon="copy" onClick={() => setRepliesOpen(true)}>
                   Saved replies
                 </Button>
@@ -621,6 +700,15 @@ export function TicketView({
             initialText={drafts.get(t.number)}
             onTextChange={text => (text ? drafts.set(t.number, text) : drafts.delete(t.number))}
             onSend={(text, kind) => sendMessage(text, kind, t.status)}
+          />
+          <SuggestionNote
+            suggestion={suggestion}
+            error={suggestError}
+            canWriteArticles={me.data?.abilities.editKnowledge === true}
+            onDismiss={() => {
+              setSuggestion(null);
+              composerRef.current?.focus();
+            }}
           />
         </div>
       </section>
@@ -637,6 +725,59 @@ export function TicketView({
 
       <SavedRepliesModal open={repliesOpen} onClose={() => setRepliesOpen(false)} onPick={pickReply} />
     </>
+  );
+}
+
+/**
+ * Under the composer: where a suggested draft came from (links open in a new tab, so the draft
+ * in the box is never lost), or why there is none, or why it failed. The outcome is also said
+ * through the inbox's persistent `announce()` (a Notice that appears with its text is not
+ * reliably read); the error is `role="alert"`.
+ */
+function SuggestionNote({
+  suggestion,
+  error,
+  canWriteArticles,
+  onDismiss,
+}: {
+  suggestion: Suggestion | null;
+  error: string | undefined;
+  canWriteArticles: boolean;
+  onDismiss: () => void;
+}) {
+  if (error) {
+    return (
+      <p className="field-error screen-inbox-suggest-error" role="alert">
+        {error}
+      </p>
+    );
+  }
+  if (!suggestion) return null;
+  const dismiss = <IconButton icon="x" label="Dismiss" size="sm" onClick={onDismiss} />;
+  if (suggestion.kind === 'no_source') {
+    return (
+      <div className="screen-inbox-suggest">
+        <Notice tone="info" action={dismiss}>
+          {NO_SOURCE_TEXT}
+          {canWriteArticles && (
+            <>
+              {' '}
+              <Link to="/articles" search={{new: true}}>
+                Write an article
+              </Link>
+            </>
+          )}
+        </Notice>
+      </div>
+    );
+  }
+  return (
+    <div className="screen-inbox-suggest">
+      <Notice tone={suggestion.confidence === 'low' ? 'warning' : 'info'} action={dismiss}>
+        <p>{draftAddedText(suggestion.citations.length, suggestion.confidence)}</p>
+        <CitationList title="Based on" newTab items={suggestion.citations.map(c => ({title: c.title, href: c.url}))} />
+      </Notice>
+    </div>
   );
 }
 

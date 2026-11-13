@@ -56,6 +56,13 @@ export const AI_MODELS: readonly AiModel[] = [
 
 export const DEFAULT_AI_MODEL = 'claude-opus-5-5';
 
+/**
+ * The fixed model that reads uploaded knowledge files (PDFs): not the owner's pick, not a
+ * setting. Claude Haiku 5.5, thinking disabled, effort low; it has no server-side fallback.
+ * Its price rises above 100K input tokens (not modelled here), so callers keep each call under 90K.
+ */
+export const EXTRACT_MODEL = 'claude-haiku-5-5';
+
 /** The owner secret holding each provider's key (`config.ownerSecret(name)`). Never the value. */
 export const AI_SECRET_NAMES: Record<AiProvider, string> = {
   anthropic: 'ANTHROPIC_API_KEY',

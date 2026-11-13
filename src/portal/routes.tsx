@@ -27,10 +27,13 @@ import {
   healthIssueQuery,
   healthIssuesQuery,
   healthQuery,
+  helpdeskOverviewQuery,
   helpdeskQuestionsQuery,
   helpdeskReportQuery,
   helpdeskSettingsQuery,
   helpdeskStatsQuery,
+  helpdeskTopQuery,
+  helpdeskWeeksQuery,
   inboxAgentsQuery,
   inboxTicketQuery,
   inboxTicketsQuery,
@@ -38,6 +41,8 @@ import {
   KB_DRAFTS,
   kbArticlesQuery,
   kbCategoriesQuery,
+  kbFilesQuery,
+  kbFilesUsageQuery,
   kbSnippetsQuery,
   meQuery,
   permissionsQuery,
@@ -175,6 +180,7 @@ const NAV_GROUPS: {label: string; items: NavItem[]}[] = [
       {to: '/categories', label: 'Categories', icon: 'menu', ability: 'editKnowledge'},
       {to: '/snippets', label: 'Snippets', icon: 'layers', ability: 'editKnowledge'},
       {to: '/import', label: 'Import', icon: 'database', ability: 'editKnowledge'},
+      {to: '/files', label: 'Files', icon: 'upload', ability: 'editKnowledge'},
     ],
   },
   {
@@ -468,7 +474,9 @@ const overviewRoute = createRoute({
       ...(can?.editKnowledge
         ? [queryClient.ensureQueryData(kbCategoriesQuery), queryClient.ensureInfiniteQueryData(kbArticlesQuery(KB_DRAFTS))]
         : []),
-      ...(can?.readAudit ? [queryClient.ensureQueryData(firstAuditQuery)] : [])
+      ...(can?.readAudit ? [queryClient.ensureQueryData(firstAuditQuery)] : []),
+      // The assistant tiles, this month's spend and the health issues.
+      ...(can?.seeHelpdeskReports ? [queryClient.ensureQueryData(helpdeskOverviewQuery)] : [])
     );
   },
   component: lazyRouteComponent(() => import('./screens/overview'), 'Overview'),
@@ -541,6 +549,23 @@ const importRoute = createRoute({
   loader: ({context: {queryClient}}) => warm(queryClient.ensureQueryData(kbCategoriesQuery)),
   component: lazyRouteComponent(() => import('./screens/import'), 'Import'),
 });
+// Knowledge files: upload a PDF, Word, text or Markdown file, read into draft articles.
+const filesRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: '/files',
+  staticData: {title: 'Knowledge files'},
+  loader: async ({context: {queryClient}}) => {
+    const me = await queryClient.ensureQueryData(meQuery).catch(() => null);
+    // Not allowed: the screen shows the API's refusal; nothing to fetch.
+    if (!me?.abilities.editKnowledge) return;
+    await warm(
+      queryClient.ensureInfiniteQueryData(kbFilesQuery),
+      queryClient.ensureQueryData(kbFilesUsageQuery),
+      queryClient.ensureQueryData(kbCategoriesQuery)
+    );
+  },
+  component: lazyRouteComponent(() => import('./screens/files'), 'Files'),
+});
 // The help desk (holders of `site:helpdesk:settings`; the routes' guards enforce it).
 const assistantRoute = createRoute({
   getParentRoute: () => rootRoute,
@@ -550,10 +575,18 @@ const assistantRoute = createRoute({
   component: lazyRouteComponent(() => import('./screens/assistant'), 'Assistant'),
 });
 // Help desk analytics (holders of `site:helpdesk:reports`; the routes' guards enforce it).
-// The period and the question filter are in the URL (`/analytics?range=7d&filter=no_source`),
-// absent = the defaults (the last 4 weeks, every question); the loader warms what it shows.
-export type AnalyticsSearch = {range?: ReportRange; filter?: QuestionFilter};
-export const ANALYTICS_DEFAULTS = {range: '4w', filter: 'all'} as const satisfies Required<AnalyticsSearch>;
+// Three tabs, each view in the URL (`/analytics?tab=tickets&weeks=13`,
+// `/analytics?filter=no_source`); absent = the defaults (the Assistant tab, the last 4 weeks,
+// every question, 4 weeks of tickets, this week's rankings). The loader warms the active tab only.
+export type AnalyticsTab = 'assistant' | 'tickets' | 'knowledge';
+export type AnalyticsSearch = {
+  tab?: Exclude<AnalyticsTab, 'assistant'>;
+  range?: ReportRange;
+  filter?: QuestionFilter;
+  weeks?: 13;
+  week?: 'previous';
+};
+export const ANALYTICS_DEFAULTS = {tab: 'assistant', range: '4w', filter: 'all', weeks: 4, week: 'current'} as const;
 
 /**
  * Anything invalid or default is dropped, so the plain address is the default view. Every key is
@@ -561,8 +594,11 @@ export const ANALYTICS_DEFAULTS = {range: '4w', filter: 'all'} as const satisfie
  */
 export function parseAnalyticsSearch(search: Record<string, unknown>): AnalyticsSearch {
   return {
+    tab: search.tab === 'tickets' || search.tab === 'knowledge' ? search.tab : undefined,
     range: isReportRange(search.range) && search.range !== ANALYTICS_DEFAULTS.range ? search.range : undefined,
     filter: isQuestionFilter(search.filter) && search.filter !== ANALYTICS_DEFAULTS.filter ? search.filter : undefined,
+    weeks: search.weeks === 13 || search.weeks === '13' ? 13 : undefined,
+    week: search.week === 'previous' ? 'previous' : undefined,
   };
 }
 
@@ -571,11 +607,19 @@ const analyticsRoute = createRoute({
   path: '/analytics',
   staticData: {title: 'Analytics'},
   validateSearch: parseAnalyticsSearch,
-  loaderDeps: ({search}) => ({range: search.range ?? ANALYTICS_DEFAULTS.range, filter: search.filter ?? ANALYTICS_DEFAULTS.filter}),
+  loaderDeps: ({search}) => ({
+    tab: search.tab ?? ANALYTICS_DEFAULTS.tab,
+    range: search.range ?? ANALYTICS_DEFAULTS.range,
+    filter: search.filter ?? ANALYTICS_DEFAULTS.filter,
+    weeks: search.weeks ?? ANALYTICS_DEFAULTS.weeks,
+    week: search.week ?? ANALYTICS_DEFAULTS.week,
+  }),
   loader: async ({context: {queryClient}, deps}) => {
     const me = await queryClient.ensureQueryData(meQuery).catch(() => null);
     // Not allowed: the screen shows the API's refusal; nothing to fetch.
     if (!me?.abilities.seeHelpdeskReports) return;
+    if (deps.tab === 'tickets') return warm(queryClient.ensureQueryData(helpdeskWeeksQuery(deps.weeks)));
+    if (deps.tab === 'knowledge') return warm(queryClient.ensureQueryData(helpdeskTopQuery(deps.week)));
     await warm(
       queryClient.ensureQueryData(helpdeskReportQuery(deps.range)),
       queryClient.ensureInfiniteQueryData(helpdeskQuestionsQuery(deps.filter))
@@ -744,6 +788,7 @@ export const routeTree = rootRoute.addChildren([
   categoriesRoute,
   snippetsRoute,
   importRoute,
+  filesRoute,
   assistantRoute,
   testLabRoute,
   analyticsRoute,

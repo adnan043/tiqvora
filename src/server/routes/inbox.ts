@@ -17,6 +17,7 @@ import {
   type Queue,
   type SourceLink,
   type StaffTicket,
+  type SuggestReply,
   type ThreadMessage,
   type ThreadPage,
   TICKET_LIMITS,
@@ -24,11 +25,22 @@ import {
   TICKET_STATUSES,
   type TicketPriority,
   type TicketStatus,
+  type WaitingTicket,
 } from '../../lib/helpdesk-tickets';
 import {audit, CORE} from '../../platform/auth';
 import {permissionScope, problem, requireAuth, requirePermission, withDb, withViewer} from '../../platform/guards';
 import {IDEMPOTENCY_KEY, IdempotencyConflict, idempotent} from '../../platform/idempotency';
-import {COUNTER_UNSOLVED, COUNTER_WAITING, deleteTicket, solvedCounter, transition, weekKey} from '../helpdesk/state';
+import {suggestReply} from '../ai/suggest';
+import {
+  assumedCounter,
+  confirmedCounter,
+  COUNTER_UNSOLVED,
+  COUNTER_WAITING,
+  deleteTicket,
+  solvedCounter,
+  transition,
+  weekKey,
+} from '../helpdesk/state';
 import {queueArticleDraftLater} from '../knowledge/drafts';
 import {PERMISSIONS} from '../permissions';
 
@@ -37,11 +49,12 @@ import {PERMISSIONS} from '../permissions';
  * Mounted at `/site-api/helpdesk/tickets` (src/server/app.ts).
  *
  *   GET    /?queue=waiting|mine|pending|solved&priority=&cursor=   a queue (20, keyset)
- *   GET    /tiles                                    the Overview tiles (counters kept on write)
+ *   GET    /tiles                                    the Overview tiles (counters kept on write) + waiting longest (≤ 5)
  *   GET    /agents                                   who can be assigned (names, ≤ 100)
  *   GET    /:number?before=                          one ticket + its thread (notes included, 100)
  *   POST   /:number/presence                         "I'm viewing it" + who else is (polled, 30 s)
  *   POST   /:number/messages {kind, body, key, expectedStatus, setStatus?}   reply or internal note
+ *   POST   /:number/suggest {} | {mode: 'reply'}     a suggested reply (src/server/ai/suggest.ts): NEVER sent
  *   POST   /:number/status {from, to}                change the status (conditional)
  *   POST   /:number/priority {from, to}              change the priority (conditional)
  *   POST   /:number/assignee {from, to}              assign to an agent, or nobody (conditional)
@@ -63,6 +76,10 @@ import {PERMISSIONS} from '../permissions';
  * `(status, last_message_at desc, id desc)` index doesn't hold the priority, so a filtered Solved
  * page scans most of the table: 826 ms measured on Solved+urgent). The dashboard hides it there.
  * Cursors out of range (a `before` past bigint, an id ≥ 2^31) are ignored: the first page.
+ *
+ * Suggest reply writes no message, no ticket, no question log and no audit row (only its rate windows
+ * and the AI spend): the draft goes back to the agent, who edits it in the composer and sends it
+ * with the ordinary reply route above. Nothing it returns is accepted by that route.
  *
  * Not cached (docs/agent/cache.md): every read here changes with every reply, and they are
  * read by a few agents, ~3 ms each. Every answer, a validator's 422 too, is `no-store`.
@@ -218,6 +235,30 @@ async function staffThread(db: PrismaClient, number: number, before: string | nu
   }));
   return {messages, nextBefore: rows.length > THREAD_PAGE ? messages.at(-1)!.id : null};
 }
+
+/**
+ * The tiles' "waiting longest" read (≤ 5): one scan of the partial index `conversations_waiting_idx`
+ * (its predicate is exactly `status IN ('waiting', 'open')`). Exported so the test EXPLAINs THIS query.
+ */
+export function waitingLongestSql(): Prisma.Sql {
+  return Prisma.sql`
+    SELECT t.number, t.subject, t.priority, c.status, c.last_message_at, u.id AS user_id, u.name
+    FROM (SELECT id, status, last_message_at, user_id FROM conversations
+          WHERE status IN ('waiting', 'open') ORDER BY last_message_at ASC, id ASC LIMIT 5) c
+    JOIN tickets t ON t.conversation_id = c.id
+    LEFT JOIN users u ON u.id = c.user_id
+    ORDER BY c.last_message_at ASC, c.id ASC`;
+}
+
+type WaitingRow = {
+  number: number;
+  subject: string;
+  priority: TicketPriority;
+  status: WaitingTicket['status'];
+  last_message_at: Date;
+  user_id: number | null;
+  name: string | null;
+};
 
 type QueueRow = {
   conversation_id: number;
@@ -375,6 +416,14 @@ const priorityBody = validator('json', (value, c) => {
   return {from: v.from as TicketPriority, to: v.to as TicketPriority};
 });
 
+/** Suggest reply: the body is `{}` or `{mode: 'reply'}` (room for other modes later); anything else 422. */
+const suggestBody = validator('json', (value, c) => {
+  const ok = value !== null && typeof value === 'object' && !Array.isArray(value) &&
+    Object.entries(value as Record<string, unknown>).every(([k, v]) => k === 'mode' && v === 'reply');
+  if (!ok) return invalid(c, {mode: 'Reload the page and try again.'});
+  return {mode: 'reply' as const};
+});
+
 const assigneeBody = validator('json', (value, c) => {
   const v = objectOf(value);
   const fields: Fields = {};
@@ -423,13 +472,37 @@ export const inboxRoutes = new Hono()
 
   // `/tiles` and `/agents` BEFORE `/:number`.
   .get('/tiles', withViewer, requireAuth, canWork, withDb, async c => {
-    const solved = solvedCounter(weekKey());
-    const rows = await c.var.db.helpdeskCounter.findMany({
-      where: {name: {in: [COUNTER_UNSOLVED, COUNTER_WAITING, solved]}},
-      select: {name: true, value: true},
-    });
+    const week = weekKey();
+    const solved = solvedCounter(week);
+    const confirmed = confirmedCounter(week);
+    const assumed = assumedCounter(week);
+    const db = c.var.db;
+    // ONE round trip: the kept counters, and the 5 longest waiting (one scan of the partial index
+    // `conversations_waiting_idx`: its predicate is exactly `status IN ('waiting', 'open')`).
+    // Names only, never an email.
+    const [rows, waiting] = await Promise.all([
+      db.helpdeskCounter.findMany({
+        where: {name: {in: [COUNTER_UNSOLVED, COUNTER_WAITING, solved, confirmed, assumed]}},
+        select: {name: true, value: true},
+      }),
+      db.$queryRaw<WaitingRow[]>(waitingLongestSql()),
+    ]);
     const value = (name: string) => rows.find(row => row.name === name)?.value ?? 0;
-    const tiles: HelpdeskTiles = {unsolved: value(COUNTER_UNSOLVED), waitingOnUs: value(COUNTER_WAITING), solvedThisWeek: value(solved)};
+    const tiles: HelpdeskTiles = {
+      unsolved: value(COUNTER_UNSOLVED),
+      waitingOnUs: value(COUNTER_WAITING),
+      solvedThisWeek: value(solved),
+      confirmedThisWeek: value(confirmed),
+      assumedThisWeek: value(assumed),
+      waitingLongest: waiting.map(row => ({
+        number: row.number,
+        subject: row.subject,
+        customer: customerOf(row.user_id === null ? null : {id: row.user_id, name: row.name ?? ''}).name,
+        status: row.status,
+        priority: row.priority,
+        since: row.last_message_at.toISOString(),
+      })),
+    };
     return c.json(tiles);
   })
 
@@ -642,6 +715,34 @@ export const inboxRoutes = new Hono()
       if (status === 'solved') queueArticleDraftLater(c, ticketId, number);
     }
     return c.json({message, status}, 201);
+  })
+
+  // A suggested reply for the agent to edit (src/server/ai/suggest.ts). NEVER sent from here: it
+  // writes no message (only its rate windows and the AI spend); the agent sends it with the route above.
+  .post('/:number/suggest', suggestBody, withViewer, requireAuth, canWork, withDb, async c => {
+    const number = numberOf(c.req.param('number'));
+    if (!number) return notFound(c);
+    const outcome = await suggestReply({db: c.var.db, number, agentId: c.var.viewer.id!});
+    switch (outcome.status) {
+      case 'ready': {
+        const body: SuggestReply = {status: 'ready', reply: outcome.reply, citations: outcome.citations, confidence: outcome.confidence};
+        return c.json(body, 200);
+      }
+      case 'no_source': {
+        const body: SuggestReply = {status: 'no_source'};
+        return c.json(body, 200);
+      }
+      case 'not_found':
+        return notFound(c);
+      case 'rate_limited':
+        return c.json(problem('rate_limited', 'You asked for a lot of drafts just now. Try again in a minute.'), 429);
+      case 'ai_off':
+        return c.json(problem('ai_off', 'The assistant is off. Add the AI key and a monthly budget in Settings › Assistant.'), 503);
+      case 'ai_cap':
+        return c.json(problem('ai_cap', "This month's AI budget is used up. Raise it in Settings › Assistant, or write the reply yourself."), 503);
+      default:
+        return c.json(problem('ai_failed', "The assistant couldn't draft a reply. Try again, or write it yourself."), 502);
+    }
   })
 
   .post('/:number/status', statusBody, withViewer, requireAuth, canWork, withDb, async c => {

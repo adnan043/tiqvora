@@ -12,6 +12,7 @@
  */
 import App from '../../layouts/App.astro';
 import {config} from '../../platform/config';
+import {allowFileUploads} from '../../platform/files';
 import PortalApp from '../../portal/PortalApp';
 import {pageContext} from '../../server/page';
 
@@ -23,6 +24,10 @@ const back = encodeURIComponent(`${Astro.url.pathname}${Astro.url.search}`);
 // session there: the app starts anyway and asks `/site-api/me` itself (its
 // shell sends a signed-out visitor to sign in).
 const open = viewer.state === 'user' || config.preview;
+// Knowledge files (`/files`) uploads straight to the storage (`putFile`), so the storage's address
+// joins THIS page's CSP. On every dashboard URL: the app moves to `/files` without a reload.
+// Remembered 10 min per Worker and never throws (storage off: the CSP is left alone).
+if (open) await allowFileUploads(Astro.csp, Astro.url);
 ---
 
 <App site={site} viewer={viewer} title="Dashboard">

@@ -1,0 +1,114 @@
+/* ---------- Knowledge files (src/portal/screens/files.tsx) ----------
+   Scoped under .screen-files (its drawers and dialog render inside it). Tokens only
+   (docs/design-system.md, tests/design-tokens.test.ts). Breakpoints 640 / 1024 / 1280. */
+
+/* A row's name: the file name, then its type and size, then why it failed (if it did). */
+.screen-files-name {
+  display: grid;
+  gap: var(--space-1);
+  min-width: 0;
+}
+
+.screen-files-name .cell-title {
+  overflow-wrap: anywhere;
+}
+
+.screen-files-meta {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.screen-files-meta .cell-sub {
+  margin-top: 0;
+}
+
+/* Words, in the danger colour, never colour alone: the Status column says "Failed" too. */
+.screen-files-error {
+  max-width: 60ch;
+  color: var(--danger);
+  font-size: var(--text-sm);
+  line-height: var(--leading-sm);
+}
+
+/* Space card: "3.2 GB left of 5 GB" over its bar. */
+.screen-files-space {
+  display: grid;
+  gap: var(--space-2);
+  max-width: 40rem;
+}
+
+.screen-files-space p {
+  margin: 0;
+}
+
+.screen-files-picked {
+  margin: calc(-1 * var(--space-2)) 0 0;
+  font-size: var(--text-sm);
+  line-height: var(--leading-sm);
+}
+
+/* Upload drawer: where a PDF goes to be read (Anthropic), in words. */
+.screen-files-privacy {
+  margin: 0;
+  font-size: var(--text-sm);
+  line-height: var(--leading-sm);
+}
+
+/* Detail drawer: the drafts made from the file, each a link to the editor with its status. */
+.screen-files-drafts {
+  display: grid;
+  gap: var(--space-2);
+}
+
+.screen-files-drafts h3 {
+  margin: 0;
+  font-size: var(--text-md);
+  line-height: var(--leading-md);
+  font-weight: var(--weight-semibold);
+}
+
+.screen-files-drafts ul {
+  display: grid;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.screen-files-drafts li {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+  min-height: var(--control);
+  border-bottom: 1px solid var(--line);
+}
+
+.screen-files-drafts li:last-child {
+  border-bottom: 0;
+}
+
+.screen-files-drafts li a {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.screen-files-drafts p {
+  margin: 0;
+}
+
+@media (max-width: 640px) {
+  /* Tap targets ≥ 40px on a phone: the row menus and other compact buttons are a full control. */
+  .screen-files .button.button-sm {
+    min-height: var(--control);
+  }
+
+  .screen-files .icon-button.button-sm {
+    min-width: var(--control);
+  }
+
+  .screen-files-drafts li {
+    padding-block: var(--space-2);
+  }
+}

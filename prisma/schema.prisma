@@ -509,34 +509,38 @@ model KbCategory {
   createdAt    DateTime    @default(now()) @map("created_at") @db.Timestamptz(3)
   updatedAt    DateTime    @updatedAt @map("updated_at") @db.Timestamptz(3)
   articles     KbArticle[]
+  sources      KbSource[]
 
   @@index([position, id])
   @@map("kb_categories")
 }
 
 model KbArticle {
-  id              Int        @id @default(autoincrement())
+  id              Int           @id @default(autoincrement())
   /// Restrict: a category with articles can't be deleted (move them first).
-  categoryId      Int        @map("category_id")
-  title           String     @db.VarChar(160)
+  categoryId      Int           @map("category_id")
+  title           String        @db.VarChar(160)
   /// URL name, unique: `/help/articles/<slug>/`.
-  slug            String     @unique @db.VarChar(160)
+  slug            String        @unique @db.VarChar(160)
   /// Markdown; the validator caps it at 50,000 characters and 60,000 UTF-8 bytes.
-  body            String     @db.Text
-  excerpt         String     @default("") @db.VarChar(300)
+  body            String        @db.Text
+  excerpt         String        @default("") @db.VarChar(300)
   /// `draft`, `published` or `archived` (CHECK in the migration).
-  status          String     @default("draft") @db.VarChar(10)
-  publishedAt     DateTime?  @map("published_at") @db.Timestamptz(3)
-  lastReviewedAt  DateTime   @default(now()) @map("last_reviewed_at") @db.Timestamptz(3)
-  helpfulCount    Int        @default(0) @map("helpful_count")
-  notHelpfulCount Int        @default(0) @map("not_helpful_count")
-  viewCount       Int        @default(0) @map("view_count")
+  status          String        @default("draft") @db.VarChar(10)
+  publishedAt     DateTime?     @map("published_at") @db.Timestamptz(3)
+  lastReviewedAt  DateTime      @default(now()) @map("last_reviewed_at") @db.Timestamptz(3)
+  helpfulCount    Int           @default(0) @map("helpful_count")
+  notHelpfulCount Int           @default(0) @map("not_helpful_count")
+  viewCount       Int           @default(0) @map("view_count")
   /// `users.id`. No foreign key: an article outlives its author (like `jobs.created_by`).
-  createdBy       Int        @map("created_by")
-  updatedBy       Int        @map("updated_by")
-  createdAt       DateTime   @default(now()) @map("created_at") @db.Timestamptz(3)
-  updatedAt       DateTime   @updatedAt @map("updated_at") @db.Timestamptz(3)
-  category        KbCategory @relation(fields: [categoryId], references: [id], onDelete: Restrict)
+  createdBy       Int           @map("created_by")
+  updatedBy       Int           @map("updated_by")
+  createdAt       DateTime      @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt       DateTime      @updatedAt @map("updated_at") @db.Timestamptz(3)
+  /// The knowledge file this draft was read from (Phase 5). SetNull: deleting the file keeps its drafts.
+  sourceId        Int?          @map("source_id")
+  category        KbCategory    @relation(fields: [categoryId], references: [id], onDelete: Restrict)
+  source          KbSource?     @relation(fields: [sourceId], references: [id], onDelete: SetNull)
   chunks          KbChunk[]
   healthIssues    HealthIssue[]
   testCases       TestCase[]
@@ -547,6 +551,8 @@ model KbArticle {
   @@index([status, id])
   /// Popular published articles.
   @@index([status, viewCount(sort: Desc), id(sort: Desc)])
+  /// A knowledge file's drafts (also the FK's index).
+  @@index([sourceId, id])
   @@map("kb_articles")
 }
 
@@ -751,6 +757,10 @@ model Ticket {
 
   /// Assigned to me (assignee = me AND solved_at IS NULL), also the FK's index.
   @@index([assigneeId, solvedAt, id])
+  /// The weekly reports job (tickets created in a week).
+  @@index([createdAt])
+  /// The weekly reports job and the nightly recount (tickets solved in a week). Full, not partial.
+  @@index([solvedAt])
   @@map("tickets")
 }
 
@@ -769,7 +779,10 @@ model TicketView {
 }
 
 /// Overview tiles, kept on write (never count()): `unsolved`, `waiting_on_us`,
-/// `solved:YYYY-MM-DD` (the UTC Monday of the week). Changed only by state.ts.
+/// `solved:YYYY-MM-DD` (the UTC Monday of the week), and the week's resolutions by the week of
+/// `tickets.solved_at`: `confirmed:YYYY-MM-DD` (the customer marked it solved) and
+/// `assumed:YYYY-MM-DD` (an agent solved it). Changed only by state.ts (`transition`,
+/// `deleteTicket`, `confirmResolution`); the nightly `helpdesk-counters` job recounts them.
 model HelpdeskCounter {
   name      String   @id @db.VarChar(32)
   value     Int      @default(0)
@@ -952,4 +965,92 @@ model TestRun {
   finishedAt DateTime? @map("finished_at") @db.Timestamptz(3)
 
   @@map("test_runs")
+}
+
+// ---------------------------------------------------------------------------
+// Reports and knowledge files (Phase 5). CHECKs live only in the migration SQL.
+
+/// Analytics, tickets per UTC week (Monday). Written ONLY by `runWeeklyStats`
+/// (src/server/helpdesk/weekly.ts, run by the nightly `helpdesk-counters` job), which recomputes
+/// the last 3 UTC weeks. Question totals are NOT here: they are `question_stats_daily`.
+model HelpdeskStatsWeekly {
+  /// The UTC Monday.
+  week                    DateTime @id @db.Date
+  ticketsCreated          Int      @default(0) @map("tickets_created")
+  ticketsSolved           Int      @default(0) @map("tickets_solved")
+  solvedConfirmed         Int      @default(0) @map("solved_confirmed")
+  solvedAssumed           Int      @default(0) @map("solved_assumed")
+  /// Tickets CREATED this week that got a first agent reply, and its median in seconds.
+  firstResponses          Int      @default(0) @map("first_responses")
+  firstResponseMedianSecs Int?     @map("first_response_median_secs")
+  /// Ratings given this week (csat_at in the week).
+  csatCount               Int      @default(0) @map("csat_count")
+  csatSum                 Int      @default(0) @map("csat_sum")
+  updatedAt               DateTime @default(now()) @map("updated_at") @db.Timestamptz(3)
+
+  @@map("helpdesk_stats_weekly")
+}
+
+/// The week's rankings (<= 10 rows per list), written by the same job. `list`:
+/// `unanswered` (question, value = times asked), `used` (article_id, value = answered
+/// questions whose best match it was), `low_rated` (article_id, value = not helpful, value2 = helpful).
+model HelpdeskTopWeekly {
+  week      DateTime @db.Date
+  list      String   @db.VarChar(10)
+  rank      Int      @db.SmallInt
+  /// No FK: a ranking outlives a deleted article (the read joins published articles only).
+  articleId Int?     @map("article_id")
+  /// `unanswered` only: one asked wording (already masked by the assistant), <= 500.
+  question  String   @default("") @db.VarChar(500)
+  value     Int      @default(0)
+  value2    Int      @default(0)
+  updatedAt DateTime @default(now()) @map("updated_at") @db.Timestamptz(3)
+
+  @@id([week, list, rank])
+  @@map("helpdesk_top_weekly")
+}
+
+/// A file an editor uploaded to become draft articles (private platform file; bytes never here).
+model KbSource {
+  id            Int         @id @default(autoincrement())
+  /// The platform's `file_...` id.
+  fileId        String      @unique @map("file_id") @db.VarChar(32)
+  name          String      @db.VarChar(200)
+  /// `pdf`, `docx`, `txt`, `md` (CHECK).
+  kind          String      @db.VarChar(4)
+  size          Int
+  /// `uploading`, `queued`, `extracting`, `drafted`, `failed`, `cancelled` (CHECK).
+  /// `failed` also covers "couldn't read" (a storage or fetch failure); there is no other state.
+  state         String      @default("uploading") @db.VarChar(10)
+  /// Where the drafts go. SetNull: a deleted category fails the draft step with words.
+  categoryId    Int?        @map("category_id")
+  /// The job cursor: the next PDF page to read (1-based; 0 = not started). Every job carries it.
+  step          Int         @default(0)
+  /// Restart counter: part of every job key, so a "Try again" never dedupes onto an old job.
+  round         Int         @default(0) @db.SmallInt
+  pagesPerCall  Int         @default(4) @map("pages_per_call") @db.SmallInt
+  pagesTotal    Int?        @map("pages_total")
+  /// PDF only: the step-0 `count_tokens` result (1..100,000, CHECK). Later steps size the hold from it.
+  inputTokens   Int?        @map("input_tokens")
+  /// Markdown read so far (<= 200,000 chars, CHECK). Cleared when the drafts are written.
+  text          String      @default("") @db.Text
+  draftsCreated Int         @default(0) @map("drafts_created")
+  /// Words for the owner when failed (or a partial-read note when drafted). Never a stack.
+  error         String      @default("") @db.VarChar(300)
+  /// AI money spent on this file (all rounds), micro-dollars.
+  spentMicros   Int         @default(0) @map("spent_micros")
+  /// `users.id`. No FK (like kb_articles.created_by).
+  createdBy     Int         @map("created_by")
+  createdAt     DateTime    @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt     DateTime    @updatedAt @map("updated_at") @db.Timestamptz(3)
+  completedAt   DateTime?   @map("completed_at") @db.Timestamptz(3)
+  category      KbCategory? @relation(fields: [categoryId], references: [id], onDelete: SetNull)
+  drafts        KbArticle[]
+
+  /// Upload rate limit per editor (bounded take 21).
+  @@index([createdBy, createdAt])
+  /// Sweep (queued/extracting idle), failed list on the Overview, active-at-once limit.
+  @@index([state, updatedAt])
+  @@index([categoryId])
+  @@map("kb_sources")
 }

@@ -76,3 +76,33 @@
     margin-top: var(--space-1);
   }
 }
+
+/* "You told us this is solved" takes focus after "Yes, it's solved" (its button is gone): no ring
+   around text that is not a control. */
+.screen-support-confirmed {
+  margin: 0;
+}
+
+.screen-support-confirmed:focus {
+  outline: none;
+}
+
+/* "Yes, it's solved" and "No, I still need help" side by side; stacked when they don't fit. */
+.screen-support-solve-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-3);
+}
+
+@media (max-width: 640px) {
+  /* "Yes" and "No" stacked, the same width, edges lined up. */
+  .screen-support-solve-actions {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr);
+    width: 100%;
+  }
+
+  .screen-support-solve-actions .button {
+    justify-content: center;
+  }
+}

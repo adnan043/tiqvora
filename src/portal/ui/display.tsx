@@ -376,8 +376,11 @@ export function BarChart({data, label, format = String}: {data: {label: string; 
   );
 }
 
-/** How far along something is (storage used, steps done). `value` 0–`max`. */
-export function ProgressBar({value, max = 100, label}: {value: number; max?: number; label: string}) {
+/**
+ * How far along something is (storage used, steps done). `value` 0–`max`. `valueText` is what a
+ * screen reader says instead of the bare number ("3.2 MB of 1 GB used").
+ */
+export function ProgressBar({value, max = 100, label, valueText}: {value: number; max?: number; label: string; valueText?: string}) {
   const pct = Math.max(0, Math.min(100, (value / max) * 100));
   return (
     <svg
@@ -388,7 +391,8 @@ export function ProgressBar({value, max = 100, label}: {value: number; max?: num
       aria-label={label}
       aria-valuemin={0}
       aria-valuemax={max}
-      aria-valuenow={value}>
+      aria-valuenow={value}
+      aria-valuetext={valueText}>
       <rect className="progress-track" width="100" height="6" rx="3" />
       <rect className="progress-fill" width={pct} height="6" rx="3" />
     </svg>

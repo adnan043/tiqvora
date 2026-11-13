@@ -7,6 +7,7 @@ import {getDb} from '../../src/platform/db';
 import {setAiProviderForTests} from '../../src/server/ai/provider';
 import {app} from '../../src/server/app';
 import {background} from '../../src/server/background';
+import {weekKey} from '../../src/server/helpdesk/state';
 import {env} from './support/cloudflare-workers';
 import {
   agentSay,
@@ -53,6 +54,25 @@ function prng(seed: number) {
   };
 }
 
+/** Every non-zero `confirmed:`/`assumed:` row, as {name: value} (copied from resolution-counters.test.ts). */
+async function storedResolutions(): Promise<Record<string, number>> {
+  const rows = await db.$queryRaw<{name: string; value: number}[]>`
+    SELECT "name", "value" FROM "helpdesk_counters"
+    WHERE ("name" LIKE 'confirmed:%' OR "name" LIKE 'assumed:%') AND "value" <> 0 ORDER BY "name"`;
+  return Object.fromEntries(rows.map(r => [r.name, r.value]));
+}
+
+/** The same, recounted from the tickets: solved ones by resolution and the UTC week of solved_at (copied too). */
+async function trueResolutions(): Promise<Record<string, number>> {
+  const rows = await db.$queryRaw<{name: string; value: number}[]>`
+    SELECT c."resolution" || ':' || to_char(date_trunc('week', t."solved_at" AT TIME ZONE 'UTC'), 'YYYY-MM-DD') AS name,
+           count(*)::int AS value
+    FROM "tickets" t JOIN "conversations" c ON c."id" = t."conversation_id"
+    WHERE c."status" = 'solved' AND c."resolution" IN ('confirmed', 'assumed')
+    GROUP BY 1 ORDER BY 1`;
+  return Object.fromEntries(rows.map(r => [r.name, r.value]));
+}
+
 // Each test signs up several accounts (scrypt) and runs requests in parallel: on a busy machine the
 // default 10 s hook timeout is too short, and a timed-out beforeEach keeps running into the next test.
 vi.setConfig({hookTimeout: 60_000, testTimeout: 90_000});
@@ -61,10 +81,19 @@ describe.skipIf(!DATABASE_URL)('help desk under concurrency (integration, real P
   let cast: HelpdeskCast;
 
   const assign = (who: Browser, n: number, from: number | null, to: number | null) => who.post(`${T}/${n}/assignee`, {from, to});
+  /** The kept tiles AND the confirmed:/assumed: rows equal a recount; the route shows them. */
   const expectTilesTrue = async (why: string) => {
     const truth = await groundTruthCounters();
     expect(await storedCounters(), why).toEqual(truth);
-    expect((await cast.agentA.get(`${T}/tiles`)).json, `${why} (tiles route)`).toEqual(truth);
+    const resolutions = await trueResolutions();
+    expect(await storedResolutions(), `${why} (resolutions)`).toEqual(resolutions);
+    const tiles = (await cast.agentA.get(`${T}/tiles`)).json;
+    expect(tiles, `${why} (tiles route)`).toMatchObject({
+      ...truth,
+      confirmedThisWeek: resolutions[`confirmed:${weekKey()}`] ?? 0,
+      assumedThisWeek: resolutions[`assumed:${weekKey()}`] ?? 0,
+    });
+    expect(Array.isArray(tiles.waitingLongest), why).toBe(true);
   };
 
   beforeAll(() => {
@@ -249,20 +278,23 @@ describe.skipIf(!DATABASE_URL)('help desk under concurrency (integration, real P
     const other = await openTicket(cast.bob);
     expect((await setStatus(cast.agentA, n, 'waiting', 'solved')).status).toBe(200);
     expect((await setStatus(cast.agentA, other, 'waiting', 'solved')).status).toBe(200);
-    // Move ticket n's solve into last week, as if it had happened then (ticket and counters both).
+    // Move ticket n's solve into last week, as if it had happened then (ticket and counters both:
+    // `solved:` and its resolution's `assumed:` — an agent solved it).
     const lastWeek = new Date(Date.now() - 7 * 86400_000);
     await db.ticket.update({where: {number: n}, data: {solvedAt: lastWeek}});
-    await db.$executeRaw`UPDATE "helpdesk_counters" SET "value" = "value" - 1
-      WHERE "name" = 'solved:' || to_char(date_trunc('week', now() AT TIME ZONE 'UTC'), 'YYYY-MM-DD')`;
-    await db.$executeRaw`INSERT INTO "helpdesk_counters" ("name", "value") VALUES ('solved:' || to_char(date_trunc('week', ${lastWeek}::timestamptz AT TIME ZONE 'UTC'), 'YYYY-MM-DD'), 1)
-      ON CONFLICT ("name") DO UPDATE SET "value" = 1`;
+    for (const prefix of ['solved', 'assumed']) {
+      await db.$executeRaw`UPDATE "helpdesk_counters" SET "value" = "value" - 1 WHERE "name" = ${`${prefix}:${weekKey()}`}`;
+      await db.$executeRaw`INSERT INTO "helpdesk_counters" ("name", "value") VALUES (${`${prefix}:${weekKey(lastWeek)}`}, 1)
+        ON CONFLICT ("name") DO UPDATE SET "value" = 1`;
+    }
+    expect(await storedResolutions()).toEqual({[`assumed:${weekKey(lastWeek)}`]: 1, [`assumed:${weekKey()}`]: 1});
     expect(await storedCounters()).toEqual({unsolved: 0, waitingOnUs: 0, solvedThisWeek: 1});
 
     expect((await setStatus(cast.agentA, n, 'solved', 'open')).status).toBe(200);
     expect(await storedCounters()).toEqual({unsolved: 1, waitingOnUs: 1, solvedThisWeek: 1});
-    const [last] = await db.$queryRaw<{value: number}[]>`SELECT "value" FROM "helpdesk_counters"
-      WHERE "name" = 'solved:' || to_char(date_trunc('week', ${lastWeek}::timestamptz AT TIME ZONE 'UTC'), 'YYYY-MM-DD')`;
-    expect(last?.value).toBe(0);
+    const last = await db.helpdeskCounter.findMany({where: {name: {in: [`solved:${weekKey(lastWeek)}`, `assumed:${weekKey(lastWeek)}`]}}, select: {value: true}});
+    expect(last.map(row => row.value)).toEqual([0, 0]);
+    expect(await storedResolutions()).toEqual({[`assumed:${weekKey()}`]: 1});
     await expectTilesTrue('after the rollover');
   });
 

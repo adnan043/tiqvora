@@ -119,6 +119,18 @@ export interface MyTicket {
   thread: ThreadPage;
 }
 
+/**
+ * The answer of the customer's POST /helpdesk/my/tickets/:number/solve: the ticket's ACTUAL status
+ * after the press (not always 'solved': a press that lost a race to an agent's reopen sees 'open'),
+ * and `confirmed` true only when THIS press solved it as confirmed or upgraded an agent's solve
+ * (assumed → confirmed). A repeat press, an already confirmed ticket or one past the reopen window
+ * answers `confirmed: false` and changes nothing.
+ */
+export interface SolveResult {
+  status: TicketStatus;
+  confirmed: boolean;
+}
+
 export interface CreateConversationInput {
   /** IDEMPOTENCY_KEY (/^[A-Za-z0-9_-]{16,64}$/), reused on every retry of one hand-off. */
   key: string;
@@ -195,11 +207,38 @@ export interface CannedReply {
   position: number;
 }
 
+/** A ticket in the Overview's "Waiting longest" list. */
+export interface WaitingTicket {
+  number: number;
+  subject: string;
+  /** The customer's name (`customerOf(user).name`), or DELETED_CUSTOMER_NAME. Never an email. */
+  customer: string;
+  status: 'waiting' | 'open';
+  priority: TicketPriority;
+  /** conversations.last_message_at, ISO: waiting since. */
+  since: string;
+}
+
 export interface HelpdeskTiles {
   unsolved: number;
   waitingOnUs: number;
   solvedThisWeek: number;
+  /** Solved this UTC week (by `solved_at`) and marked solved by the customer. */
+  confirmedThisWeek: number;
+  /** Solved this UTC week by an agent; provisional for `reopenDays`. */
+  assumedThisWeek: number;
+  /** Oldest first, <= 5. */
+  waitingLongest: WaitingTicket[];
 }
+
+/**
+ * The 200 body of `POST /site-api/helpdesk/tickets/:number/suggest`: a draft reply for the agent to
+ * edit and send (never sent by itself), or `no_source` when the knowledge base doesn't answer it.
+ * `reply` may hold `{{customer.firstName}}` / `{{agent.firstName}}` placeholders and `[name]` masks.
+ */
+export type SuggestReply =
+  | {status: 'ready'; reply: string; citations: SourceLink[]; confidence: 'high' | 'medium' | 'low'}
+  | {status: 'no_source'};
 
 /* ---------------------------------------------------------------- words and rules */
 

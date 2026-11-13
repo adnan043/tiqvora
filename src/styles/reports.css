@@ -1,0 +1,152 @@
+/*
+ * The help desk's report screens: the Overview's help desk tiles and "Needs attention"
+ * (src/portal/screens/overview.tsx, `.screen-overview`) and the Analytics tabs
+ * (src/portal/screens/analytics.tsx and analytics/*.tsx, `.screen-analytics`).
+ * Tokens only (docs/design-system.md); imported by src/layouts/App.astro.
+ */
+
+/* --------------------------------------------------------------- Overview -- */
+
+/* The main column under the tiles: "Needs attention", then recent activity. */
+.screen-overview .overview-main {
+  display: grid;
+  gap: var(--space-6);
+  align-content: start;
+  min-width: 0;
+}
+
+/* A second, quieter line under a tile's hint (how resolutions are counted). */
+.screen-overview .overview-stat-note {
+  margin: 0;
+  font-size: var(--text-xs);
+  line-height: var(--leading-xs);
+  color: var(--muted);
+}
+
+/* The spend tile's bar sits under its hint, like the sparkline. */
+.screen-overview .stat .progress {
+  margin-top: var(--space-2);
+}
+
+/* A "Needs attention" row's link: never squeezed onto two lines. */
+.screen-overview .list-row-end a {
+  white-space: nowrap;
+}
+
+/* Five tiles between phone and wide: 3 + 2 (six columns, the last two tiles wider) instead of
+   four and an orphan. */
+@media (min-width: 641px) and (max-width: 1280px) {
+  .screen-overview .stat-grid:has(> :nth-child(5):last-child) {
+    grid-template-columns: repeat(6, minmax(0, 1fr));
+  }
+
+  .screen-overview .stat-grid:has(> :nth-child(5):last-child) > * {
+    grid-column: span 2;
+  }
+
+  .screen-overview .stat-grid:has(> :nth-child(5):last-child) > :nth-child(n + 4) {
+    grid-column: span 3;
+  }
+}
+
+@media (max-width: 640px) {
+  .screen-overview .overview-main {
+    gap: var(--space-4);
+  }
+
+  /* A long ticket title keeps the row's width: the status (or link) wraps under it, lined
+     up with the text (past the 34px icon box, 32 + 2, and the row's gap). */
+  .screen-overview .list-row {
+    flex-wrap: wrap;
+  }
+
+  .screen-overview .list-row-text + .list-row-end {
+    flex-basis: 100%;
+    padding-left: calc(var(--space-8) + var(--space-0-5) + var(--space-3));
+  }
+
+  /* Two tiles a row: a label on two lines would push its value down. Every label takes two
+     lines' room, so the values line up. */
+  .screen-overview .stat-label {
+    min-height: calc(var(--leading-sm) * 2);
+  }
+
+  /* An odd last tile spans the row instead of leaving a hole. */
+  .screen-overview .stat-grid > :last-child:nth-child(odd) {
+    grid-column: 1 / -1;
+  }
+
+  /* Tap targets ≥ 40px on a phone: a row's "Review" / "Fix it" link and a ticket's or
+     request's title link are a full control tall. */
+  .screen-overview .list-row-end a,
+  .screen-overview .list-row-title a {
+    display: inline-flex;
+    align-items: center;
+    min-height: var(--control);
+  }
+
+  /* The title link is a flex row on a phone: the ticket number keeps its width and the
+     title wraps beside it, instead of the number breaking digit by digit. */
+  .screen-overview .list-row-title a {
+    flex-wrap: wrap;
+    column-gap: var(--space-1);
+  }
+
+  .screen-overview .list-row-title a .ticket-number {
+    flex-shrink: 0;
+    white-space: nowrap;
+  }
+}
+
+/* -------------------------------------------------------------- Analytics -- */
+
+/* The tab's own controls (period, weeks, which week) and links, above its content. */
+.screen-analytics .analytics-tab {
+  display: grid;
+  gap: var(--space-6);
+  min-width: 0;
+}
+
+.screen-analytics .analytics-tab-note {
+  margin: 0;
+  font-size: var(--text-sm);
+  line-height: var(--leading-sm);
+  color: var(--muted);
+}
+
+/* A number column: digits line up. */
+.screen-analytics .analytics-number {
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+/* Bar labels never wrap. Eight or more ("17 Aug" × 13 weeks) don't fit side by side in a
+   half-width card at any screen size: every other one shows (the newest included), each
+   centred under its bar and free to use its hidden neighbours' room. */
+.screen-analytics .bar-chart-labels > * {
+  display: flex;
+  justify-content: center;
+  white-space: nowrap;
+}
+
+.screen-analytics .bar-chart-labels:has(> :nth-child(8)) > :nth-child(even) {
+  visibility: hidden;
+}
+
+@media (max-width: 640px) {
+  .screen-analytics .analytics-tab {
+    gap: var(--space-4);
+  }
+
+  /* Tap targets ≥ 40px on a phone: the rows' "Write an article" and "Edit" links. */
+  .screen-analytics .button.button-sm {
+    min-height: var(--control);
+  }
+
+  /* The kit pins a row's actions to the card's top-right corner, sized for an icon menu;
+     these are text buttons ("Write an article"), so they go under the row's text instead. */
+  .screen-analytics .data-table td.cell-actions {
+    position: static;
+    padding-top: var(--space-2);
+  }
+}

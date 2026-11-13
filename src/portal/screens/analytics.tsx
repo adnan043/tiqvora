@@ -1,6 +1,9 @@
 import {useInfiniteQuery, useQuery} from '@tanstack/react-query';
-import {useNavigate, useSearch} from '@tanstack/react-router';
+import {Link, useNavigate, useSearch} from '@tanstack/react-router';
 import {useState} from 'react';
+
+// Types only: a value import would pull the router module into this lazy screen's graph.
+import type {AnalyticsTab, ANALYTICS_DEFAULTS as Defaults} from '../routes';
 
 import {
   type QuestionFilter,
@@ -12,10 +15,11 @@ import {
   type ReportTotals,
 } from '../../lib/helpdesk-report-types';
 import {helpdeskQuestionsQuery, helpdeskReportQuery} from '../queries';
-import {ago, when} from '../shared';
+import {ago, useMe, when} from '../shared';
 import {
   BarChart,
   Button,
+  buttonClass,
   Card,
   type Column,
   DataTable,
@@ -30,8 +34,11 @@ import {
   Select,
   Stat,
   StatusBadge,
+  Tabs,
   type Tone,
 } from '../ui';
+import {KnowledgeTab} from './analytics/knowledge';
+import {TicketsTab} from './analytics/tickets';
 
 const OUTCOMES: Record<QuestionOutcome, {label: string; tone: Tone}> = {
   answered: {label: 'Answered', tone: 'success'},
@@ -100,21 +107,98 @@ function bucketLabel(bucket: ReportBucket, range: ReportRange) {
   return REPORT_RANGES[range].bucketDays === 1 ? weekday.format(day) : dayMonth.format(day);
 }
 
+/** routes.tsx `ANALYTICS_DEFAULTS` (what an absent search key means), checked against it by type. */
+const DEFAULTS = {tab: 'assistant', range: '4w', filter: 'all', weeks: 4, week: 'current'} as const satisfies typeof Defaults;
+
+const TABS: {value: AnalyticsTab; label: string; description: string}[] = [
+  {
+    value: 'assistant',
+    label: 'Assistant',
+    description: "How many questions the assistant answered on its own, and which ones it couldn't. Days are counted in UTC.",
+  },
+  {
+    value: 'tickets',
+    label: 'Tickets',
+    description: 'Tickets created and solved, how fast the team first replied, and how customers rated it. Weeks start Monday (UTC).',
+  },
+  {
+    value: 'knowledge',
+    label: 'Knowledge',
+    description: 'Questions your articles missed, the articles the assistant used most and the ones rated lowest. Weeks start Monday (UTC).',
+  },
+];
+
 /**
- * Holders of `site:helpdesk:reports`: how the assistant is doing. Totals come from
- * `question_stats_daily` (kept on write), the list from the question log
- * (`/site-api/helpdesk/reports`).
+ * Holders of `site:helpdesk:reports`: three tabs, each view in the URL (routes.tsx
+ * `parseAnalyticsSearch`: `?tab=tickets&weeks=13`, `?filter=no_source`), so a link (the
+ * Overview's "Needs attention") opens exactly it.
+ * - Assistant: `question_stats_daily` totals (kept on write) and the question log.
+ * - Tickets: the nightly weekly rows (`/reports/weeks`).
+ * - Knowledge: the nightly rankings (`/reports/top`).
  */
 export function Analytics() {
-  // In the URL (`?range=7d&filter=no_source`, routes.tsx `parseAnalyticsSearch`): a link opens this view.
   const search = useSearch({from: '/analytics'});
-  const navigate = useNavigate();
-  const range: ReportRange = search.range ?? '4w';
-  const filter: QuestionFilter = search.filter ?? 'all';
+  const navigate = useNavigate({from: '/analytics'});
+  const tab: AnalyticsTab = search.tab ?? DEFAULTS.tab;
+  const setTab = (next: AnalyticsTab) =>
+    void navigate({to: '/analytics', search: prev => ({...prev, tab: next === 'assistant' ? undefined : next}), replace: true});
+  const current = TABS.find(item => item.value === tab) ?? TABS[0]!;
+  // Not a report holder (a customer, a knowledge editor): ONE refusal, not one per section.
+  const me = useMe();
+  if (me.data && !me.data.abilities.seeHelpdeskReports) {
+    return (
+      <div className="app-page screen-analytics">
+        <PageHeader title="Analytics" />
+        <EmptyState
+          icon="lock"
+          title="Analytics is for your support team"
+          action={
+            <Link className={buttonClass({variant: 'secondary'})} to="/">
+              Back to the overview
+            </Link>
+          }>
+          Your account can't see the help desk's reports. Ask an admin if you need them.
+        </EmptyState>
+      </div>
+    );
+  }
+  return (
+    <div className="app-page screen-analytics">
+      <PageHeader title="Analytics" description={current.description} />
+      <Tabs label="Report" items={TABS} value={tab} onChange={setTab}>
+        {tab === 'tickets' ? (
+          <TicketsTab
+            weeks={search.weeks ?? DEFAULTS.weeks}
+            onWeeks={next =>
+              void navigate({to: '/analytics', search: prev => ({...prev, weeks: next === 13 ? 13 : undefined}), replace: true})
+            }
+          />
+        ) : tab === 'knowledge' ? (
+          <KnowledgeTab
+            week={search.week ?? DEFAULTS.week}
+            onWeek={next =>
+              void navigate({to: '/analytics', search: prev => ({...prev, week: next === 'previous' ? 'previous' : undefined}), replace: true})
+            }
+          />
+        ) : (
+          <AssistantTab />
+        )}
+      </Tabs>
+    </div>
+  );
+}
+
+/** The Assistant tab: the period's totals against the period before, the chart and the question log. */
+function AssistantTab() {
+  // In the URL (`?range=7d&filter=no_source`): a link opens this view.
+  const search = useSearch({from: '/analytics'});
+  const navigate = useNavigate({from: '/analytics'});
+  const range: ReportRange = search.range ?? DEFAULTS.range;
+  const filter: QuestionFilter = search.filter ?? DEFAULTS.filter;
   const setRange = (next: ReportRange) =>
-    void navigate({to: '/analytics', search: prev => ({...prev, range: next === '4w' ? undefined : next}), replace: true});
+    void navigate({to: '/analytics', search: prev => ({...prev, range: next === DEFAULTS.range ? undefined : next}), replace: true});
   const setFilter = (next: QuestionFilter) =>
-    void navigate({to: '/analytics', search: prev => ({...prev, filter: next === 'all' ? undefined : next}), replace: true});
+    void navigate({to: '/analytics', search: prev => ({...prev, filter: next === DEFAULTS.filter ? undefined : next}), replace: true});
   const report = useQuery(helpdeskReportQuery(range));
   const questions = useInfiniteQuery(helpdeskQuestionsQuery(filter));
 
@@ -175,12 +259,10 @@ export function Analytics() {
   const rows = questions.data?.pages.flatMap(page => page.items);
 
   return (
-    <div className="app-page screen-analytics">
-      <PageHeader
-        title="Assistant analytics"
-        description="How many questions the assistant answered on its own, and which ones it couldn't. Days are counted in UTC."
-        actions={<SegmentedControl label="Period" value={range} onChange={setRange} options={RANGE_OPTIONS} />}
-      />
+    <div className="analytics-tab">
+      <div className="toolbar">
+        <SegmentedControl label="Period" value={range} onChange={setRange} options={RANGE_OPTIONS} />
+      </div>
 
       <div className="stat-grid">
         <Stat
@@ -205,10 +287,10 @@ export function Analytics() {
           hint={t ? `${number.format(t.helpfulUp + t.helpfulDown)} rated` : vsHint}
         />
         <Stat
-          label="AI cost"
+          label="Answer cost"
           icon="zap"
           value={tile(x => money.format(x.costCents / 100))}
-          hint={t && t.answered > 0 ? `${money.format(t.costCents / 100 / t.answered)} per answer` : `${REPORT_RANGES[range].label}`}
+          hint="Assistant answers only; summaries, drafts and files are in the monthly spend"
         />
       </div>
 
@@ -224,7 +306,14 @@ export function Analytics() {
                 format={value => number.format(value)}
               />
             ) : (
-              <EmptyState icon="message-square" title="No questions yet">
+              <EmptyState
+                icon="message-square"
+                title="No questions yet"
+                action={
+                  <a className={buttonClass({variant: 'secondary'})} href="/help/">
+                    Open your help center
+                  </a>
+                }>
                 Questions show here once customers use the chat on your site.
               </EmptyState>
             )
@@ -291,11 +380,29 @@ export function Analytics() {
           loading={questions.isPending}
           error={questions.error}
           empty={
-            <EmptyState icon="inbox" title={filter === 'all' ? 'No questions yet' : 'Nothing here'}>
-              {filter === 'all'
-                ? 'Questions show here as customers ask the assistant.'
-                : 'No question matches this filter. Try “All questions”.'}
-            </EmptyState>
+            filter === 'all' ? (
+              <EmptyState
+                icon="inbox"
+                title="No questions yet"
+                action={
+                  <a className={buttonClass({variant: 'secondary'})} href="/help/">
+                    Open your help center
+                  </a>
+                }>
+                Questions show here as customers ask the assistant.
+              </EmptyState>
+            ) : (
+              <EmptyState
+                icon="inbox"
+                title="Nothing here"
+                action={
+                  <Button variant="secondary" onClick={() => setFilter('all')}>
+                    Show all questions
+                  </Button>
+                }>
+                No question matches this filter.
+              </EmptyState>
+            )
           }
         />
       </Card>

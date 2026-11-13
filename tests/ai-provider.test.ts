@@ -1,6 +1,17 @@
 import {afterEach, beforeEach, describe, expect, it, vi} from 'vitest';
 
-import {ANSWER_SCHEMA, callAnthropic, MAX_TOKENS, type ProviderRequest, setAiProviderForTests} from '../src/server/ai/provider';
+import {aiModelOf, AI_MODELS, EXTRACT_MODEL} from '../src/lib/ai-models';
+import {
+  ANSWER_SCHEMA,
+  callAnthropic,
+  type ContentBlock,
+  countTokens,
+  MAX_TOKENS,
+  type ProviderRequest,
+  requestBody,
+  setAiProviderForTests,
+  setCountTokensForTests,
+} from '../src/server/ai/provider';
 
 /**
  * The real Messages API call (src/server/ai/provider.ts) with a stubbed global `fetch`: the
@@ -157,5 +168,182 @@ describe('callAnthropic (real call, stubbed fetch)', () => {
     expect(await callAnthropic(KEY, req(true))).toEqual({ok: false, reason: 'network'});
     expect(await callAnthropic('  ', req(true))).toEqual({ok: false, reason: 'http'});
     for (const call of vi.mocked(console.warn).mock.calls) expect(String(call[0])).not.toContain(KEY);
+  });
+});
+
+// A fake PDF's base64: the provider must pass it through unchanged and never log it.
+const PDF_B64 = 'JVBERi0xLjcKU0VDUkVULURPQ1VNRU5ULUJPRFk=';
+const docBlocks = (): ContentBlock[] => [
+  {type: 'document', source: {type: 'base64', media_type: 'application/pdf', data: PDF_B64}},
+  {type: 'text', text: 'Transcribe pages 1 to 4 only.'},
+];
+
+describe('EXTRACT_MODEL', () => {
+  it('is a listed model, Claude Haiku 5.5, with no server-side fallback', () => {
+    expect(EXTRACT_MODEL).toBe('claude-haiku-5-5');
+    expect(AI_MODELS.map(m => m.id)).toContain(EXTRACT_MODEL);
+    expect(aiModelOf(EXTRACT_MODEL).id).toBe(EXTRACT_MODEL);
+    expect(aiModelOf(EXTRACT_MODEL).serverFallback).toBe(false);
+  });
+});
+
+describe('requestBody: content blocks and thinking', () => {
+  it('passes block arrays unchanged and sends thinking only when set', () => {
+    const blocks = docBlocks();
+    const withThinking = requestBody({
+      model: EXTRACT_MODEL,
+      system: 'S',
+      messages: [{role: 'user', content: blocks}],
+      serverFallback: false,
+      thinking: {type: 'disabled'},
+      maxTokens: 5000,
+    });
+    expect(withThinking.messages).toEqual([{role: 'user', content: docBlocks()}]);
+    expect(withThinking.thinking).toEqual({type: 'disabled'});
+    expect(withThinking.max_tokens).toBe(5000);
+    expect(withThinking).not.toHaveProperty('fallbacks');
+
+    const plain = requestBody({model: 'claude-opus-5-5', system: 'S', messages: [{role: 'user', content: 'Hi'}], serverFallback: true});
+    expect(plain).not.toHaveProperty('thinking');
+    expect(plain.messages).toEqual([{role: 'user', content: 'Hi'}]);
+
+    expect(requestBody({...req(false), thinking: {type: 'adaptive'}}).thinking).toEqual({type: 'adaptive'});
+  });
+});
+
+describe('callAnthropic with a document block (stubbed fetch)', () => {
+  let sent: Sent[];
+  beforeEach(() => {
+    setAiProviderForTests(null);
+    sent = [];
+    vi.stubGlobal('fetch', async (url: string, init: RequestInit) => {
+      sent.push({url, init});
+      return new Response('{"error":"x"}', {status: 400});
+    });
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+  });
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    vi.restoreAllMocks();
+  });
+
+  it('sends the document and disabled thinking; a failure never logs the base64', async () => {
+    const result = await callAnthropic(KEY, {
+      model: EXTRACT_MODEL,
+      system: 'S',
+      messages: [{role: 'user', content: docBlocks()}],
+      serverFallback: false,
+      thinking: {type: 'disabled'},
+    });
+    expect(result).toEqual({ok: false, reason: 'http'});
+    const b = JSON.parse(String(sent[0]!.init.body)) as Record<string, unknown>;
+    expect(b.messages).toEqual([{role: 'user', content: docBlocks()}]);
+    expect(b.thinking).toEqual({type: 'disabled'});
+    expect(b).not.toHaveProperty('fallbacks');
+    for (const call of vi.mocked(console.warn).mock.calls) {
+      expect(String(call[0])).not.toContain(PDF_B64);
+      expect(String(call[0])).not.toContain(KEY);
+    }
+  });
+});
+
+describe('countTokens (real call, stubbed fetch)', () => {
+  let sent: Sent[];
+  let respond: () => Response | Promise<Response>;
+  const countReq = () => ({
+    model: EXTRACT_MODEL,
+    system: 'SYSTEM',
+    messages: [{role: 'user' as const, content: docBlocks()}],
+    thinking: {type: 'disabled' as const},
+  });
+
+  beforeEach(() => {
+    setCountTokensForTests(null);
+    sent = [];
+    respond = () => new Response(JSON.stringify({input_tokens: 4321}), {status: 200});
+    vi.stubGlobal('fetch', async (url: string, init: RequestInit) => {
+      sent.push({url, init});
+      return respond();
+    });
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+  });
+  afterEach(() => {
+    setCountTokensForTests(null);
+    vi.unstubAllGlobals();
+    vi.restoreAllMocks();
+  });
+
+  it('posts model, system, messages and thinking (no output_config) to the fixed URL', async () => {
+    expect(await countTokens(KEY, countReq())).toEqual({ok: true, inputTokens: 4321});
+    expect(sent).toHaveLength(1);
+    expect(sent[0]!.url).toBe('https://api.anthropic.com/v1/messages/count_tokens');
+    expect(sent[0]!.init.method).toBe('POST');
+    expect(sent[0]!.init.redirect).toBe('manual');
+    expect(sent[0]!.init.signal).toBeInstanceOf(AbortSignal);
+    const h = sent[0]!.init.headers as Record<string, string>;
+    expect(h['x-api-key']).toBe(KEY);
+    expect(h['content-type']).toBe('application/json');
+    expect(typeof h['anthropic-version']).toBe('string');
+    expect(h).not.toHaveProperty('anthropic-beta');
+    expect(JSON.parse(String(sent[0]!.init.body))).toEqual({
+      model: EXTRACT_MODEL,
+      system: 'SYSTEM',
+      messages: [{role: 'user', content: docBlocks()}],
+      thinking: {type: 'disabled'},
+    });
+
+    const {thinking: _omit, ...noThinking} = countReq();
+    await countTokens(KEY, noThinking);
+    expect(JSON.parse(String(sent[1]!.init.body))).not.toHaveProperty('thinking');
+  });
+
+  it('validates the reply shape', async () => {
+    for (const bad of ['not json', '{}', '{"input_tokens":-1}', '{"input_tokens":1.5}', '{"input_tokens":"9"}', '[1]']) {
+      respond = () => new Response(bad, {status: 200});
+      expect(await countTokens(KEY, countReq())).toEqual({ok: false, reason: 'shape'});
+    }
+  });
+
+  it('http, timeout and network failures; no key → failure without fetch; never logs the key or the base64', async () => {
+    respond = () => new Response('{"error":"x"}', {status: 413});
+    expect(await countTokens(KEY, countReq())).toEqual({ok: false, reason: 'http'});
+    respond = () => {
+      throw new DOMException('timed out', 'TimeoutError');
+    };
+    expect(await countTokens(KEY, countReq())).toEqual({ok: false, reason: 'timeout'});
+    respond = () => {
+      throw new TypeError('fetch failed');
+    };
+    expect(await countTokens(KEY, countReq())).toEqual({ok: false, reason: 'network'});
+
+    const before = sent.length;
+    expect(await countTokens('  ', countReq())).toEqual({ok: false, reason: 'http'});
+    expect(await countTokens('', countReq())).toEqual({ok: false, reason: 'http'});
+    expect(sent.length).toBe(before);
+
+    for (const call of vi.mocked(console.warn).mock.calls) {
+      expect(String(call[0])).not.toContain(KEY);
+      expect(String(call[0])).not.toContain(PDF_B64);
+    }
+  });
+
+  it('a real timeout aborts a slow reply', async () => {
+    vi.stubGlobal('fetch', (url: string, init: RequestInit) => {
+      sent.push({url, init});
+      return new Promise<Response>((_, reject) => {
+        init.signal?.addEventListener('abort', () => reject(init.signal!.reason));
+      });
+    });
+    expect(await countTokens(KEY, {...countReq(), timeoutMs: 20})).toEqual({ok: false, reason: 'timeout'});
+  });
+
+  it('the test hook replaces the call and null restores it', async () => {
+    const fake = vi.fn(async () => ({ok: true as const, inputTokens: 7}));
+    setCountTokensForTests(fake);
+    expect(await countTokens(KEY, countReq())).toEqual({ok: true, inputTokens: 7});
+    expect(fake).toHaveBeenCalledWith(KEY, countReq());
+    expect(sent).toHaveLength(0);
+    setCountTokensForTests(null);
+    expect(await countTokens(KEY, countReq())).toEqual({ok: true, inputTokens: 4321});
   });
 });

@@ -1,6 +1,14 @@
 import {infiniteQueryOptions, queryOptions} from '@tanstack/react-query';
 
-import type {HelpdeskReport, QuestionFilter, QuestionsPage, ReportRange} from '../lib/helpdesk-report-types';
+import type {
+  HelpdeskOverview,
+  HelpdeskReport,
+  QuestionFilter,
+  QuestionsPage,
+  ReportRange,
+  TopReport,
+  WeeksReport,
+} from '../lib/helpdesk-report-types';
 import type {
   Agent,
   CannedReply,
@@ -16,6 +24,7 @@ import type {TicketPriority} from '../lib/helpdesk-tones';
 import type {HelpdeskSettingsAdmin} from '../lib/helpdesk-types';
 import type {HealthIssueDetail, HealthIssuesPage, HealthState, HealthType} from '../lib/knowledge-health-types';
 import type {TestCasesPage, TestRunView} from '../lib/test-lab';
+import {type KbFileDetail, type KbFilesPage, type KbFilesUsage} from '../lib/kb-file-types';
 import type {ArticleStatus, KbManageArticle, KbManageArticlesPage, KbManageCategory, KbSnippetsPage} from '../lib/kb-types';
 import type {AdminUser, AuditRow, PermissionRow, RoleRow} from '../lib/types';
 import {refreshSession} from '../platform/browser';
@@ -231,7 +240,10 @@ export const inboxAgentsQuery = queryOptions({
   staleTime: 5 * 60_000,
 });
 
-/** The overview's three tiles (counters kept on write, never a count query). */
+/**
+ * The overview's ticket tiles: counters kept on write (unsolved, waiting on us, solved /
+ * confirmed / assumed this week, never a count query) plus the 5 longest-waiting tickets.
+ */
 export const helpdeskStatsQuery = queryOptions({
   queryKey: ['helpdesk', 'stats'],
   queryFn: () => read<HelpdeskTiles>(api.helpdesk.tickets.tiles.$get()),
@@ -362,6 +374,72 @@ export const helpdeskQuestionsQuery = (filter: QuestionFilter) =>
       read<QuestionsPage>(api.helpdesk.reports.questions.$get({query: {filter, before: pageParam ?? ''}})),
     getNextPageParam: last => last.nextBefore ?? undefined,
     staleTime: 60_000,
+  });
+
+/** The overview's assistant tiles (this UTC week), this month's AI spend and the health issues. */
+export const helpdeskOverviewQuery = queryOptions({
+  queryKey: ['helpdesk', 'reports', 'overview'],
+  queryFn: () => read<HelpdeskOverview>(api.helpdesk.reports.overview.$get()),
+  staleTime: 60_000,
+});
+
+/** Analytics › Tickets: the last 4 or 13 UTC weeks of ticket numbers (worked out nightly). */
+export const helpdeskWeeksQuery = (count: 4 | 13) =>
+  queryOptions({
+    queryKey: ['helpdesk', 'reports', 'weeks', count],
+    queryFn: () => read<WeeksReport>(api.helpdesk.reports.weeks.$get({query: {count: String(count)}})),
+    staleTime: 60_000,
+  });
+
+/** Analytics › Knowledge: this or last week's rankings (unanswered questions, most-used and lowest-rated articles). */
+export const helpdeskTopQuery = (week: 'current' | 'previous') =>
+  queryOptions({
+    queryKey: ['helpdesk', 'reports', 'top', week],
+    queryFn: () => read<TopReport>(api.helpdesk.reports.top.$get({query: {week}})),
+    staleTime: 60_000,
+  });
+
+// ---------------------------------------------------------- knowledge files --
+// Holders of `site:kb:edit` (`/dashboard/files`). Writes invalidate `['kb', 'files', 'list']` and
+// `['kb', 'files', 'file']`; only an upload or a delete also refetches `['kb', 'files', 'usage']`.
+
+/** Storage space left and whether PDFs can be read (the AI key and a budget). */
+export const kbFilesUsageQuery = queryOptions({
+  queryKey: ['kb', 'files', 'usage'],
+  queryFn: () => read<KbFilesUsage>(api.kb.files.usage.$get()),
+  staleTime: 30_000,
+});
+
+/**
+ * `/dashboard/files`: uploaded files, newest first, 20 a page (keyset on id). It never polls
+ * itself (a refetch would reload EVERY loaded page): `kbFilesPollQuery` reads the first page
+ * while a file is being read, and the screen patches those rows into this list.
+ */
+export const kbFilesQuery = infiniteQueryOptions({
+  queryKey: ['kb', 'files', 'list'],
+  initialPageParam: undefined as string | undefined,
+  queryFn: ({pageParam}) => read<KbFilesPage>(api.kb.files.$get({query: {before: pageParam ?? ''}})),
+  getNextPageParam: last => (last.next ? String(last.next) : undefined),
+});
+
+/**
+ * The first page only, for following files being read. The screen enables it (and sets its pace:
+ * 4 s for the first minute, then 15 s; off while the detail drawer follows its own file, and off
+ * for a file that has not moved in 15 minutes).
+ */
+export const kbFilesPollQuery = queryOptions({
+  queryKey: ['kb', 'files', 'poll'],
+  queryFn: () => read<KbFilesPage>(api.kb.files.$get({query: {before: ''}})),
+  refetchIntervalInBackground: false,
+  staleTime: 0,
+  gcTime: 0,
+});
+
+/** One file with the drafts made from it (the drawer sets its own polling pace). */
+export const kbFileQuery = (id: number) =>
+  queryOptions({
+    queryKey: ['kb', 'files', 'file', id],
+    queryFn: () => read<{file: KbFileDetail}>(api.kb.files[':id'].$get({param: {id: String(id)}})),
   });
 
 

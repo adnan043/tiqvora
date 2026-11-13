@@ -3,6 +3,8 @@ import {defineBackground, DontRetry, type JobInfo} from '../platform/background'
 import {config} from '../platform/config';
 import {getDb} from '../platform/db';
 import {runSummaryJob, sweepPendingSummaries} from './helpdesk/summary';
+import {runWeeklyStats} from './helpdesk/weekly';
+import {runKbExtractJob, sweepKbSources} from './kb/sources/pipeline';
 import {runArticleDraftJob, runHealthDraftJob} from './knowledge/drafts';
 import {parseWeek, runKnowledgeHealth} from './knowledge/health';
 import {runTestLabBatch} from './knowledge/test-lab';
@@ -46,14 +48,20 @@ function requireSiteUrl(job: JobInfo): string {
 const VIEWS_BATCH = 5000;
 const VIEWS_MAX_BATCHES = 10;
 
+/** A non-negative INT from a job's data (0 … 2^31−1), or null. */
+function nonNegInt(value: unknown): number | null {
+  return typeof value === 'number' && Number.isSafeInteger(value) && value >= 0 && value <= INT_MAX ? value : null;
+}
+
 /**
  * The nightly safety net for the Overview tiles (`helpdesk_counters`, kept on every write by
  * src/server/helpdesk/state.ts): recounts `unsolved`, `waiting_on_us` and this UTC week's
- * `solved:YYYY-MM-DD` in ONE statement (two counts on the status indexes, one on tickets),
- * writes only the rows that drifted, then prunes `solved:` weeks older than 8 and presence rows
- * older than 7 days (bounded batches). Safe to repeat: a second run changes nothing.
+ * `solved:YYYY-MM-DD`, `confirmed:YYYY-MM-DD` and `assumed:YYYY-MM-DD` in ONE statement (two
+ * counts on the status indexes, one on tickets(solved_at) joined to conversations), writes only the
+ * rows that drifted, then prunes `solved:`/`confirmed:`/`assumed:` weeks older than 8 and presence
+ * rows older than 7 days (bounded batches). Safe to repeat: a second run changes nothing.
  *
- * The recount runs in a short transaction that FIRST locks those three counter rows (FOR UPDATE,
+ * The recount runs in a short transaction that FIRST locks those five counter rows (FOR UPDATE,
  * ORDER BY name: the same order `transition()` uses after its conversation/ticket locks). A status
  * change that wants to move them waits until the recount commits, then applies its delta to the
  * recounted value; one that committed before the lock is already in the counts. So a concurrent
@@ -66,12 +74,24 @@ async function recountHelpdeskCounters(db: PrismaClient): Promise<void> {
       await tx.$executeRaw`
         SELECT "name" FROM "helpdesk_counters"
         WHERE "name" IN ('unsolved', 'waiting_on_us',
-          'solved:' || to_char(date_trunc('week', now() AT TIME ZONE 'UTC'), 'YYYY-MM-DD'))
+          'solved:' || to_char(date_trunc('week', now() AT TIME ZONE 'UTC'), 'YYYY-MM-DD'),
+          'confirmed:' || to_char(date_trunc('week', now() AT TIME ZONE 'UTC'), 'YYYY-MM-DD'),
+          'assumed:' || to_char(date_trunc('week', now() AT TIME ZONE 'UTC'), 'YYYY-MM-DD'))
         ORDER BY "name"
         FOR UPDATE`;
       await tx.$executeRaw`
         WITH week AS (
           SELECT date_trunc('week', now() AT TIME ZONE 'UTC') AS start
+        ), resolutions AS (
+          -- Driven from tickets(solved_at) (this week's few rows), each conversation by its primary
+          -- key: OFFSET 0 keeps the planner from turning it into a scan of all conversations.
+          SELECT count(*) FILTER (WHERE c."resolution" = 'confirmed')::int AS confirmed,
+            count(*) FILTER (WHERE c."resolution" = 'assumed')::int AS assumed
+          FROM week, "tickets" t
+          JOIN LATERAL (
+            SELECT cv."resolution", cv."status" FROM "conversations" cv WHERE cv."id" = t."conversation_id" OFFSET 0
+          ) c ON true
+          WHERE t."solved_at" >= week.start AT TIME ZONE 'UTC' AND c."status" = 'solved'
         ), counts AS (
           SELECT 'unsolved'::text AS name,
             (SELECT count(*) FROM "conversations" WHERE "status" IN ('waiting', 'open', 'pending'))::int AS value
@@ -81,20 +101,28 @@ async function recountHelpdeskCounters(db: PrismaClient): Promise<void> {
           SELECT 'solved:' || to_char(week.start, 'YYYY-MM-DD'),
             (SELECT count(*) FROM "tickets" WHERE "solved_at" >= week.start AT TIME ZONE 'UTC')::int
           FROM week
+          UNION ALL
+          SELECT v.prefix || to_char(week.start, 'YYYY-MM-DD'), v.value
+          FROM week, resolutions,
+            LATERAL (VALUES ('confirmed:', resolutions.confirmed), ('assumed:', resolutions.assumed)) AS v(prefix, value)
         )
         INSERT INTO "helpdesk_counters" ("name", "value", "updated_at")
         SELECT name, value, now() FROM counts ORDER BY name
         ON CONFLICT ("name") DO UPDATE SET "value" = EXCLUDED."value", "updated_at" = now()
         WHERE "helpdesk_counters"."value" <> EXCLUDED."value"`;
     },
-    // Two index counts and a write; status changes queue behind the row locks meanwhile.
+    // Three index counts and a write; status changes queue behind the row locks meanwhile.
     {maxWait: 5_000, timeout: 20_000}
   );
-  // 'solved:YYYY-MM-DD' sorts by date: older than 8 weeks goes (a few rows a year).
+  // '<prefix>:YYYY-MM-DD' sorts by date within a prefix: older than 8 weeks goes (a few rows a year).
   await db.$executeRaw`
-    DELETE FROM "helpdesk_counters"
-    WHERE "name" LIKE 'solved:%'
-      AND "name" < 'solved:' || to_char(date_trunc('week', now() AT TIME ZONE 'UTC') - interval '8 weeks', 'YYYY-MM-DD')`;
+    WITH cutoff AS (
+      SELECT to_char(date_trunc('week', now() AT TIME ZONE 'UTC') - interval '8 weeks', 'YYYY-MM-DD') AS week
+    )
+    DELETE FROM "helpdesk_counters" USING cutoff
+    WHERE ("name" LIKE 'solved:%' AND "name" < 'solved:' || cutoff.week)
+       OR ("name" LIKE 'confirmed:%' AND "name" < 'confirmed:' || cutoff.week)
+       OR ("name" LIKE 'assumed:%' AND "name" < 'assumed:' || cutoff.week)`;
   for (let i = 0; i < VIEWS_MAX_BATCHES; i++) {
     const deleted = await db.$executeRaw`
       DELETE FROM "ticket_views" WHERE ctid IN (
@@ -151,9 +179,15 @@ export const background = defineBackground({
     await sweepPendingSummaries(siteDb(), config.siteUrl);
   },
 
-  /** Nightly (background.json): recount the help desk tiles (a safety net; see above). */
+  /**
+   * Nightly (background.json): recount the help desk tiles (a safety net; see above), then the
+   * weekly reports (`helpdesk_stats_weekly` / `helpdesk_top_weekly`, the last 3 UTC weeks:
+   * src/server/helpdesk/weekly.ts). Both are idempotent: on a throw the retry runs both again.
+   */
   'helpdesk-counters': async () => {
-    await recountHelpdeskCounters(siteDb());
+    const db = siteDb();
+    await recountHelpdeskCounters(db);
+    await runWeeklyStats(db);
   },
 
   /**
@@ -198,5 +232,27 @@ export const background = defineBackground({
     if (typeof after !== 'number' || !Number.isSafeInteger(after) || after < 0 || after > INT_MAX) throw new DontRetry('Bad cursor.');
     // No site address: the batch ends the run (failed/stalled) instead of leaving it running.
     await runTestLabBatch(siteDb(), {runId, after}, job, jobSiteUrl(job));
+  },
+
+  /**
+   * One step of reading a knowledge file {sourceId, round, step} (sent by "complete" on the Files
+   * screen, by the previous step, and by the sweep). Safe to repeat: stale or duplicate deliveries
+   * return, a read failure marks the file failed without a retry (src/server/kb/sources/pipeline.ts).
+   */
+  'kb-extract': async (data, job) => {
+    const sourceId = posInt(field(data, 'sourceId'));
+    const round = nonNegInt(field(data, 'round'));
+    const step = nonNegInt(field(data, 'step'));
+    if (sourceId === null || round === null || step === null) throw new DontRetry('Bad file job.');
+    await runKbExtractJob(siteDb(), {sourceId, round, step}, job, jobSiteUrl(job));
+  },
+
+  /**
+   * At :07, :22, :37 and :52 (background.json): re-sends knowledge files whose job stopped, fails
+   * the ones idle over 2 h, deletes uploads never completed. Without SITE_URL the housekeeping
+   * still runs and the sends are skipped.
+   */
+  'kb-sources-sweep': async () => {
+    await sweepKbSources(siteDb(), config.siteUrl);
   },
 });

@@ -3,6 +3,7 @@ import {afterAll, beforeAll, beforeEach, describe, expect, it, vi} from 'vitest'
 import {setCacheModeForTests} from '../../src/platform/cache';
 import {setAiProviderForTests} from '../../src/server/ai/provider';
 import {app} from '../../src/server/app';
+import {waitingLongestSql} from '../../src/server/routes/inbox';
 import {env} from './support/cloudflare-workers';
 import {
   agentSay,
@@ -406,8 +407,55 @@ describe.skipIf(!DATABASE_URL)('help desk inbox (integration, real Postgres)', (
     await setStatus(cast.agentA, a, 'waiting', 'solved');
     await setStatus(cast.agentA, b, 'waiting', 'pending');
     const tiles = (await cast.agentA.get(`${T}/tiles`)).json;
-    expect(tiles).toEqual({unsolved: 2, waitingOnUs: 1, solvedThisWeek: 1});
-    expect(tiles).toEqual(await groundTruthCounters());
+    expect(tiles).toMatchObject({unsolved: 2, waitingOnUs: 1, solvedThisWeek: 1, confirmedThisWeek: 0, assumedThisWeek: 1});
+    expect(tiles).toMatchObject(await groundTruthCounters());
+
+    // A customer's own Solve counts as confirmed; reopening takes the agent's solve back out.
+    const c = await openTicket(cast.bob, 'Fourth');
+    expect((await cast.bob.post(`/site-api/helpdesk/my/tickets/${c}/solve`, {})).status).toBe(200);
+    expect((await setStatus(cast.agentA, a, 'solved', 'open')).status).toBe(200);
+    const after = (await cast.agentA.get(`${T}/tiles`)).json;
+    expect(after).toMatchObject({unsolved: 3, waitingOnUs: 2, solvedThisWeek: 1, confirmedThisWeek: 1, assumedThisWeek: 0});
+    expect(after).toMatchObject(await groundTruthCounters());
+  });
+
+  it('tiles: waiting longest is waiting + open only, oldest first, at most 5, names and never an email', async () => {
+    const minutesAgo = (m: number) => new Date(Date.now() - m * 60_000);
+    // Oldest of all, but pending / solved: never listed.
+    await seedTickets(1, {userId: cast.ids.alice, status: 'pending', lastMessageAt: minutesAgo(500), subject: 'Pending one'});
+    await seedTickets(1, {userId: cast.ids.alice, status: 'solved', lastMessageAt: minutesAgo(400), subject: 'Solved one'});
+    const [gone] = await seedTickets(1, {userId: cast.ids.bob, status: 'open', lastMessageAt: minutesAgo(300), subject: 'Open, oldest'});
+    const [w1] = await seedTickets(1, {userId: cast.ids.alice, status: 'waiting', lastMessageAt: minutesAgo(200), subject: 'Waiting 200', priority: 'urgent'});
+    const tied = await seedTickets(3, {userId: cast.ids.alice, status: 'waiting', lastMessageAt: minutesAgo(100), subject: 'Tied'});
+    await seedTickets(2, {userId: cast.ids.alice, status: 'waiting', lastMessageAt: minutesAgo(10), subject: 'Newest'});
+    // The customer of the oldest one deleted their account: listed under the fixed label.
+    await db.user.delete({where: {id: cast.ids.bob}});
+
+    const res = await cast.agentA.get(`${T}/tiles`);
+    expect(res.status).toBe(200);
+    const list = res.json.waitingLongest as {number: number; subject: string; customer: string; status: string; priority: string; since: string}[];
+    expect(list.map(r => r.number)).toEqual([gone, w1, ...tied]);
+    expect(list[0]).toEqual({number: gone, subject: 'Open, oldest', customer: 'Deleted customer', status: 'open', priority: 'normal', since: expect.any(String)});
+    expect(list[1]).toMatchObject({customer: 'alice', status: 'waiting', priority: 'urgent'});
+    expect(Date.parse(list[1]!.since)).toBeLessThan(Date.parse(list[2]!.since));
+    expectNoLeak(res.json, ['@', 'example.test', 'Pending one', 'Solved one', 'Newest'], 'tiles');
+
+    // Nothing waiting → an empty list.
+    await db.conversation.updateMany({where: {status: {in: ['waiting', 'open']}}, data: {status: 'pending'}});
+    expect((await cast.agentA.get(`${T}/tiles`)).json.waitingLongest).toEqual([]);
+  });
+
+  it('tiles: the waiting list reads the partial index `conversations_waiting_idx`', async () => {
+    await seedTickets(30, {userId: cast.ids.alice, status: 'pending'});
+    await seedTickets(5, {userId: cast.ids.alice, status: 'waiting'});
+    // The route's OWN query (inbox.ts exports it): an index scan of the partial index (seq scans off, so the
+    // tiny test table can't hide a plan that would scan every conversation on a real site).
+    const plan = await db.$transaction(async tx => {
+      await tx.$executeRaw`SET LOCAL enable_seqscan = off`;
+      const query = waitingLongestSql();
+      return tx.$queryRawUnsafe<{'QUERY PLAN': string}[]>(`EXPLAIN ${query.text}`, ...query.values);
+    });
+    expect(plan.map(r => r['QUERY PLAN']).join('\n')).toContain('conversations_waiting_idx');
   });
 
   it('a deleted customer: the ticket stays for the team, anonymised; never 500', async () => {

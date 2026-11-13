@@ -101,9 +101,11 @@ export interface Citation {
 
 /**
  * The articles an AI answer used, numbered as the answer cites them ([1],
- * [2]…). Links are this site's own help-center pages.
+ * [2]…). Links are this site's own help-center pages. `newTab` opens them in a
+ * new tab (an external-link icon, and "(opens in a new tab)" for screen
+ * readers): use it where leaving the page would lose work, like a draft reply.
  */
-export function CitationList({items, title = 'Sources'}: {items: Citation[]; title?: string}) {
+export function CitationList({items, title = 'Sources', newTab = false}: {items: Citation[]; title?: string; newTab?: boolean}) {
   if (!items.length) return null;
   return (
     <div className="citation-list">
@@ -111,11 +113,17 @@ export function CitationList({items, title = 'Sources'}: {items: Citation[]; tit
       <ol className="citation-list-items">
         {items.map((item, index) => (
           <li key={`${index}-${item.href}`}>
-            <a className="citation-link" href={item.href}>
+            <a className="citation-link" href={item.href} {...(newTab ? {target: '_blank', rel: 'noopener noreferrer'} : {})}>
               <span className="citation-number" aria-hidden="true">
                 {index + 1}
               </span>
               <span className="citation-title">{item.title}</span>
+              {newTab && (
+                <>
+                  <Icon name="external" size={14} />
+                  <span className="visually-hidden"> (opens in a new tab)</span>
+                </>
+              )}
             </a>
           </li>
         ))}

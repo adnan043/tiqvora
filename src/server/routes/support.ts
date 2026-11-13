@@ -11,6 +11,7 @@ import {
   type MyTicketRow,
   type MyTicketsPage,
   type Resolution,
+  type SolveResult,
   type SourceLink,
   type ThreadMessage,
   type ThreadPage,
@@ -23,7 +24,7 @@ import {audit} from '../../platform/auth';
 import {problem, requireAuth, requireVerified, withDb, withViewer} from '../../platform/guards';
 import {IDEMPOTENCY_KEY, IdempotencyConflict, idempotent} from '../../platform/idempotency';
 import {maskPersonalData} from '../ai/answer';
-import {countCreatedTicket, transition} from '../helpdesk/state';
+import {confirmResolution, countCreatedTicket, transition} from '../helpdesk/state';
 import {summarizeNewTicket} from '../helpdesk/summary';
 import {queueArticleDraftLater} from '../knowledge/drafts';
 import {HELPDESK_DEFAULTS} from '../kb/settings';
@@ -46,7 +47,8 @@ import {clientRateKey, takeHourWindow, takeRateWindow} from '../rate-window';
  *   GET  /site-api/helpdesk/my/tickets/:number?before=     one ticket and its thread (100 a page)
  *   POST /site-api/helpdesk/my/tickets/:number/seen        clears the unread flag
  *   POST /site-api/helpdesk/my/tickets/:number/messages    {body, key} a reply (idempotent)
- *   POST /site-api/helpdesk/my/tickets/:number/solve       the customer says it's solved
+ *   POST /site-api/helpdesk/my/tickets/:number/solve       the customer says it's solved (an agent's solve → confirmed)
+ *                                                          → {status, confirmed} (SolveResult: the ACTUAL status)
  *   POST /site-api/helpdesk/my/tickets/:number/csat        {score 1–5}, once, while solved
  *
  * Limits: hand-offs and replies share ONE window of TICKET_LIMITS.customerPerHour per account and
@@ -804,25 +806,52 @@ export const myTicketRoutes = new Hono()
       select: {id: true, status: true},
     });
     if (!conversation) return notFound(c);
-    // Already solved: the customer's wish holds, nothing to change.
-    if (conversation.status === 'solved') return c.json({status: 'solved' as TicketStatus});
-    const moved = await transition(db, {
-      conversationId: conversation.id,
-      from: [...UNSOLVED],
-      to: 'solved',
-      resolution: 'confirmed',
+    // Not solved yet: solve it as confirmed (the counters move in the same statement).
+    if (conversation.status !== 'solved') {
+      const moved = await transition(db, {
+        conversationId: conversation.id,
+        from: [...UNSOLVED],
+        to: 'solved',
+        resolution: 'confirmed',
+      });
+      if (moved) {
+        await audit(db, {
+          actorUserId: me,
+          action: 'helpdesk_ticket_solved',
+          target: ['ticket', number],
+          meta: {by: 'customer', from: moved.oldStatus},
+        });
+        // After commit AND after the answer (waitUntil): an article draft from this solved ticket
+        // (never throws; not on "already solved"; a lost send is picked up by the tick's sweep).
+        queueArticleDraftLater(c, moved.ticketId, number);
+        return c.json({status: 'solved', confirmed: true} satisfies SolveResult);
+      }
+      // Lost a race (a second press, or an agent solved or moved it meanwhile): fall through to the
+      // solved path, which upgrades an agent's solve or answers with what the ticket is now.
+    }
+    // Solved: an agent's solve ("assumed") inside the reopen window is upgraded to "confirmed"
+    // (counters moved in the same statement). No article draft here: the agent's solve queued it.
+    const upgraded = await confirmResolution(db, conversation.id);
+    if (upgraded) {
+      await audit(db, {
+        actorUserId: me,
+        action: 'helpdesk_ticket_confirmed',
+        target: ['ticket', number],
+        meta: {by: 'customer'},
+      });
+      return c.json({status: 'solved', confirmed: true} satisfies SolveResult);
+    }
+    // Nothing changed (already confirmed, outside the window, a repeat press, or a race lost to a
+    // reopen): one read of what the ticket is NOW, so the answer never claims a status it doesn't have.
+    const now = await db.conversation.findFirst({
+      where: {id: conversation.id, userId: me},
+      select: {status: true},
     });
-    if (!moved) return changedMeanwhile(c);
-    await audit(db, {
-      actorUserId: me,
-      action: 'helpdesk_ticket_solved',
-      target: ['ticket', number],
-      meta: {by: 'customer', from: moved.oldStatus},
-    });
-    // After commit AND after the answer (waitUntil): an article draft from this solved ticket
-    // (never throws; not on "already solved"; a lost send is picked up by the tick's sweep).
-    queueArticleDraftLater(c, moved.ticketId, number);
-    return c.json({status: 'solved' as TicketStatus});
+    if (!now) return notFound(c);
+    const status = now.status as TicketStatus;
+    // It was unsolved and is still unsolved: our solve did not happen.
+    if (conversation.status !== 'solved' && status !== 'solved') return changedMeanwhile(c);
+    return c.json({status, confirmed: false} satisfies SolveResult);
   })
 
   .post('/tickets/:number/csat', numberParam, csatBody, withViewer, requireAuth, withDb, async c => {

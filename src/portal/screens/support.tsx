@@ -16,6 +16,7 @@ import {
   CitationList,
   type Column,
   Composer,
+  type ComposerHandle,
   DataTable,
   DefinitionList,
   EmptyState,
@@ -146,6 +147,16 @@ function solveErrorText(error: unknown): string {
   if (error instanceof ApiError) {
     if (error.status === 404) return 'This request is no longer there.';
     if (error.status === 409) return 'This request changed meanwhile. Close this and try again.';
+    if (error.status === 429) return error.message;
+  }
+  return "That wasn't saved. Check your connection and try again.";
+}
+
+/** "Yes, it's solved" failing, in words, under its button. */
+function confirmErrorText(error: unknown): string {
+  if (error instanceof ApiError) {
+    if (error.status === 404) return 'This request is no longer there.';
+    if (error.status === 409) return 'This request changed meanwhile. It has been refreshed.';
     if (error.status === 429) return error.message;
   }
   return "That wasn't saved. Check your connection and try again.";
@@ -320,6 +331,10 @@ export function SupportTicket() {
   const [justRated, setJustRated] = useState(false);
   // Counts up when the customer marks the request solved: the rating card then takes focus.
   const [focusRate, setFocusRate] = useState(0);
+  // What "Yes, it's solved" did, kept here (not the mutation's isSuccess, which waits for the
+  // refetch): the note that replaces its button, and whether it was confirmed.
+  const [confirmOutcome, setConfirmOutcome] = useState<{confirmed: boolean; text: string} | null>(null);
+  const composer = useRef<ComposerHandle>(null);
   const confirm = useConfirm();
   const thanks = useRef<HTMLDivElement>(null);
   const scroller = useRef<HTMLDivElement>(null);
@@ -329,6 +344,7 @@ export function SupportTicket() {
   useEffect(() => {
     setOlder(null);
     setFocusRate(0);
+    setConfirmOutcome(null);
     pendingKey.current = null;
   }, [number]);
 
@@ -376,6 +392,7 @@ export function SupportTicket() {
           : current,
       );
       setAnnouncement('Message sent.');
+      setConfirmOutcome(null);
       return queryClient.invalidateQueries({queryKey: ['support']});
     },
     onError: error => {
@@ -400,7 +417,13 @@ export function SupportTicket() {
         current
           ? {
               ...current,
-              ticket: {...current.ticket, status, canRate: status === 'solved' && current.ticket.csat === null},
+              // The customer closed it: it counts as confirmed (no "Did it solve your problem?" card).
+              ticket: {
+                ...current.ticket,
+                status,
+                resolution: status === 'solved' ? 'confirmed' : current.ticket.resolution,
+                canRate: status === 'solved' && current.ticket.csat === null,
+              },
             }
           : current,
       );
@@ -431,6 +454,50 @@ export function SupportTicket() {
     });
     if (solved) setFocusRate(count => count + 1);
   };
+
+  const confirmedNote = useRef<HTMLParagraphElement>(null);
+  // "Yes, it's solved": our team solved it (assumed); the customer agrees, and it counts as confirmed.
+  // The same solve route: on a solved request it upgrades the resolution (inside the reopen window).
+  // `confirmed` says whether it did: false when it was already confirmed, too old, or reopened meanwhile.
+  const confirmSolved = useMutation({
+    mutationFn: () =>
+      read<{status: TicketStatus; confirmed: boolean}>(
+        api.helpdesk.my.tickets[':number'].solve.$post({
+          param: {number: String(number)},
+        }),
+      ),
+    onSuccess: ({status, confirmed}) => {
+      queryClient.setQueryData(supportTicketQuery(number).queryKey, current =>
+        current
+          ? {
+              ...current,
+              ticket: {...current.ticket, status, resolution: confirmed ? 'confirmed' : current.ticket.resolution},
+            }
+          : current,
+      );
+      const text = confirmed
+        ? 'You told us this is solved. Thank you.'
+        : status === 'solved'
+          ? 'This request is already solved. Nothing needed changing.'
+          : 'This request is open again, so it was not marked as solved. Reply below if you still need help.';
+      setConfirmOutcome({confirmed, text});
+      setAnnouncement(confirmed ? 'Thanks for confirming.' : text);
+      void queryClient.invalidateQueries({queryKey: supportTicketQuery(number).queryKey, exact: true});
+    },
+    onError: error => {
+      // Gone, reopened or changed meanwhile: read the request again.
+      if (error instanceof ApiError && (error.status === 404 || error.status === 409))
+        void queryClient.invalidateQueries({
+          queryKey: ['support', 'ticket', number],
+        });
+    },
+  });
+
+  // The button went away: once the note that replaced it has rendered, it takes focus (else the
+  // thanks for a rating). After the commit, never a frame that may run before it.
+  useEffect(() => {
+    if (confirmOutcome) (confirmedNote.current ?? thanks.current)?.focus();
+  }, [confirmOutcome]);
 
   const messages = useMemo(() => (t ? oldestFirst(older?.messages ?? [], t.thread.messages) : []), [t, older]);
   const newest = messages.at(-1);
@@ -574,6 +641,40 @@ export function SupportTicket() {
             </Notice>
           )}
           {ticket.error && <ErrorNote error={ticket.error} title="This request could not refresh" />}
+          {/* "Did it solve your problem?" first, above the conversation: on a phone the side card
+              is at the very bottom, under the thread, the rating and the reply box. */}
+          {confirmOutcome && (!confirmOutcome.confirmed || t.status === 'solved') ? (
+            <Card>
+              <p className="muted screen-support-confirmed" tabIndex={-1} ref={confirmedNote}>
+                {confirmOutcome.text}
+              </p>
+            </Card>
+          ) : t.status === 'solved' && t.resolution === 'assumed' && t.canReply ? (
+            <Card>
+              <div className="screen-support-solve">
+                <p>Our team marked this as solved. Did it solve your problem?</p>
+                <div className="screen-support-solve-actions">
+                  <Button
+                    variant="secondary"
+                    icon="check-circle"
+                    pending={confirmSolved.isPending}
+                    pendingLabel="Saving…"
+                    onClick={() => confirmSolved.mutate()}>
+                    Yes, it's solved
+                  </Button>
+                  {/* Replying opens it again: take them to the reply box. */}
+                  <Button variant="secondary" icon="message-square" disabled={confirmSolved.isPending} onClick={() => composer.current?.focus()}>
+                    No, I still need help
+                  </Button>
+                </div>
+                {confirmSolved.error && (
+                  <p className="field-error" role="alert">
+                    {confirmErrorText(confirmSolved.error)}
+                  </p>
+                )}
+              </div>
+            </Card>
+          ) : null}
           <Card title="Conversation" flush>
             <div className="screen-support-thread" role="log" aria-live="off" aria-label="Conversation" tabIndex={0} ref={scroller}>
               {earlierCursor && (
@@ -607,6 +708,7 @@ export function SupportTicket() {
           {t.canReply ? (
             // The Composer is its own bordered box on the card colour: no Card around it (one frame).
             <Composer
+              handle={composer}
               label="Reply to our team"
               placeholder="e.g. I tried that, and it still shows the error."
               sendLabel="Send"
@@ -639,14 +741,14 @@ export function SupportTicket() {
         <Card
           title="About this request"
           footer={
-            t.status !== 'solved' && (
+            t.status !== 'solved' ? (
               <div className="screen-support-solve">
                 <p className="muted">Got what you needed? Let us know and we'll close it.</p>
                 <Button variant="secondary" icon="check-circle" pending={solve.isPending} pendingLabel="Saving…" onClick={() => void markSolved()}>
                   This is solved
                 </Button>
               </div>
-            )
+            ) : null
           }>
           <DefinitionList
             items={[

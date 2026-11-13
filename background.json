@@ -8,12 +8,15 @@
     "knowledge-health": {"retries": 3, "concurrency": 1},
     "article-drafts": {"retries": 3, "concurrency": 2},
     "health-drafts": {"retries": 2, "concurrency": 2},
-    "test-lab": {"retries": 2, "concurrency": 1}
+    "test-lab": {"retries": 2, "concurrency": 1},
+    "kb-extract": {"retries": 3, "concurrency": 1},
+    "kb-sources-sweep": {"retries": 1, "concurrency": 1}
   },
   "schedules": {
     "rate-windows-cleanup": {"every": "hour", "label": "Delete old rate-limit counters"},
     "ticket-summaries-sweep": {"cron": "*/15 * * * *", "label": "Summarize tickets the assistant missed"},
-    "helpdesk-counters": {"every": "day", "at": "04:00", "label": "Recount help desk tiles"},
-    "knowledge-health": {"list": "knowledge-health-tick", "cron": "*/30 * * * *", "label": "Knowledge health: starts the weekly check (Mondays 07:30, your time zone)"}
+    "helpdesk-counters": {"every": "day", "at": "04:00", "label": "Recount help desk tiles and weekly reports"},
+    "knowledge-health": {"list": "knowledge-health-tick", "cron": "*/30 * * * *", "label": "Knowledge health: starts the weekly check (Mondays 07:30, your time zone)"},
+    "kb-sources-sweep": {"cron": "7,22,37,52 * * * *", "label": "Restart knowledge files that stopped"}
   }
 }

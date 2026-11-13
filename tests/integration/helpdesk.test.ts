@@ -203,7 +203,8 @@ describe.skipIf(!DATABASE_URL)('help desk assistant (integration, real Postgres,
 
     // Citing every source number given: only article URLs come back, each once.
     answer = async call => {
-      const n = (call.req.messages.at(-1)!.content.match(/<source /g) ?? []).length;
+      const last = call.req.messages.at(-1)!.content;
+      const n = ((typeof last === 'string' ? last : JSON.stringify(last)).match(/<source /g) ?? []).length;
       return ok(reply({citations: Array.from({length: n}, (_, i) => i + 1)}));
     };
     const all = (await ask(guest, REFUND_Q)).json as unknown as AskResult;

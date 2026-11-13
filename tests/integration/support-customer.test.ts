@@ -3,6 +3,7 @@ import {afterAll, beforeAll, beforeEach, describe, expect, it, vi} from 'vitest'
 import {setCacheModeForTests} from '../../src/platform/cache';
 import {setAiProviderForTests} from '../../src/server/ai/provider';
 import {app} from '../../src/server/app';
+import {assumedCounter, solvedCounter, weekKey} from '../../src/server/helpdesk/state';
 import {deleteOldRateWindows} from '../../src/server/rate-window';
 import {env} from './support/cloudflare-workers';
 import {
@@ -94,7 +95,7 @@ describe.skipIf(!DATABASE_URL)('My support (integration, real Postgres)', () => 
 
     expect((await customerSay(cast.bob, n, 'I am not alice')).status).toBe(404);
     expect((await cast.bob.post(`${my(n)}/csat`, {score: 1})).status).toBe(404);
-    expect([404, 409]).toContain((await cast.bob.post(`${my(n)}/solve`, {})).status);
+    expect((await cast.bob.post(`${my(n)}/solve`, {})).status).toBe(404);
     await cast.bob.post(`${my(n)}/seen`, {});
     expect(await db.message.count()).toBe(1);
     expect(await statusOf(n)).toBe('waiting');
@@ -235,24 +236,40 @@ describe.skipIf(!DATABASE_URL)('My support (integration, real Postgres)', () => 
 
     const old = await openTicket(cast.alice, 'An old one');
     expect((await setStatus(cast.agentA, old, 'waiting', 'solved')).status).toBe(200);
-    await db.ticket.update({where: {number: old}, data: {solvedAt: new Date(Date.now() - 15 * 86400_000)}});
+    // Solved 15 days ago, as if it had been: solved_at AND its solved:/assumed: counters move together.
+    const longAgo = new Date(Date.now() - 15 * 86400_000);
+    await db.ticket.update({where: {number: old}, data: {solvedAt: longAgo}});
+    for (const name of [solvedCounter, assumedCounter]) {
+      await db.$executeRaw`UPDATE "helpdesk_counters" SET "value" = "value" - 1 WHERE "name" = ${name(weekKey())}`;
+      await db.$executeRaw`
+        INSERT INTO "helpdesk_counters" ("name", "value") VALUES (${name(weekKey(longAgo))}, 1)
+        ON CONFLICT ("name") DO UPDATE SET "value" = "helpdesk_counters"."value" + 1`;
+    }
+    expect(await storedCounters()).toEqual(await groundTruthCounters());
     const view = (await cast.alice.get(my(old))).json.ticket as MyTicket;
     expect(view.canReply).toBe(false);
     const closed = await customerSay(cast.alice, old, 'Hello again');
     expect(closed.status).toBe(409);
     expect(await db.message.count({where: {body: 'Hello again'}})).toBe(0);
     expect(await statusOf(old)).toBe('solved');
+    expect(await storedCounters()).toEqual(await groundTruthCounters());
+    expect(
+      (await db.helpdeskCounter.findUnique({where: {name: assumedCounter(weekKey(longAgo))}}))?.value
+    ).toBe(1);
   });
 
   it('the customer marks it solved: resolution confirmed, counters follow', async () => {
     const n = await openTicket(cast.alice);
     const res = await cast.alice.post(`${my(n)}/solve`, {});
     expect(res.status, JSON.stringify(res.json)).toBe(200);
+    expect(res.json).toEqual({status: 'solved', confirmed: true});
     const ticket = (await cast.alice.get(my(n))).json.ticket as MyTicket;
     expect(ticket).toMatchObject({status: 'solved', resolution: 'confirmed', canRate: true});
     expect(await storedCounters()).toEqual(await groundTruthCounters());
     // Saying it again is a no-op (200), not a second change: no second audit row, counters unchanged.
-    expect((await cast.alice.post(`${my(n)}/solve`, {})).status).toBe(200);
+    const again = await cast.alice.post(`${my(n)}/solve`, {});
+    expect(again.status).toBe(200);
+    expect(again.json).toEqual({status: 'solved', confirmed: false});
     expect(await db.auditEvent.count({where: {action: 'helpdesk_ticket_solved'}})).toBe(1);
     expect(await storedCounters()).toEqual(await groundTruthCounters());
   });

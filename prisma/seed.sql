@@ -8,6 +8,9 @@
 -- and snippet, so search and the help center work straight after loading, plus agents' saved
 -- replies, three open Knowledge health issues and eight Test Lab questions. No conversations or tickets: they belong to users, and a seed has none. Ids come from
 -- subselects on the unique slugs, never hard-coded.
+-- No knowledge files (kb_sources: each needs a real uploaded file) and no weekly report rows
+-- (helpdesk_stats_weekly / helpdesk_top_weekly: the nightly job writes them from the data, so the
+-- Reports tabs show "first numbers tomorrow" until it has run).
 BEGIN;
 
 -- Stop when real data is there: this help desk is already in use (any conversation or ticket counts).
@@ -22,6 +25,7 @@ BEGIN
           COALESCE((SELECT md5('a:' || "id") FROM "kb_articles" WHERE "slug" = 'descaling-your-espresso-machine'), ''),
           COALESCE((SELECT 'article:' || "id" FROM "kb_articles" WHERE "slug" = 'apply-a-discount-code'), '')))
      OR EXISTS (SELECT 1 FROM "test_cases" WHERE "question_key" NOT IN ('how do i change the grind in my subscription', 'do you ship to canada', 'how do i cancel my subscription', 'my espresso tastes sour', 'what are your support hours', 'do you sell matcha', 'can i get a refund for my last order', 'can i talk to a real person'))
+     OR EXISTS (SELECT 1 FROM "kb_sources")
      OR EXISTS (SELECT 1 FROM "conversations")
      OR EXISTS (SELECT 1 FROM "tickets") THEN
     RAISE EXCEPTION 'prisma/seed.sql is sample data and this help desk is already in use. Nothing was changed.';
@@ -1174,8 +1178,13 @@ The Northwind team', 2)
 ) AS v("title", "body", "position")
 WHERE NOT EXISTS (SELECT 1 FROM "helpdesk_canned_replies" c WHERE c."title" = v."title");
 
--- Ticket tile counters (the migration creates them too; kept when present).
-INSERT INTO "helpdesk_counters" ("name", "value") VALUES ('unsolved', 0), ('waiting_on_us', 0)
+-- Ticket tile counters (the migration creates them too; kept when present), and this UTC week's
+-- resolutions (no tickets in a seed: 0).
+INSERT INTO "helpdesk_counters" ("name", "value")
+SELECT v."name", 0 FROM (VALUES ('unsolved'), ('waiting_on_us'),
+  ('confirmed:' || to_char(date_trunc('week', now() AT TIME ZONE 'UTC'), 'YYYY-MM-DD')),
+  ('assumed:' || to_char(date_trunc('week', now() AT TIME ZONE 'UTC'), 'YYYY-MM-DD'))) AS v("name")
+ORDER BY v."name"
 ON CONFLICT ("name") DO NOTHING;
 
 -- Knowledge health: three open issues, as the weekly check and the draft job would write them.

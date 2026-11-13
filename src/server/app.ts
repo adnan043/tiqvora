@@ -16,6 +16,7 @@ import {helpdeskReportRoutes} from './routes/helpdesk-reports';
 import {helpdeskSettingsRoutes} from './routes/helpdesk-settings';
 import {inboxRoutes} from './routes/inbox';
 import {kbRoutes} from './routes/kb';
+import {kbFileRoutes} from './routes/kb-files';
 import {kbManageRoutes} from './routes/kb-manage';
 import {knowledgeHealthRoutes} from './routes/knowledge-health';
 import {siteRoutes} from './routes/site';
@@ -35,6 +36,7 @@ import {testLabRoutes} from './routes/test-lab';
  *   *    /auth/...      sign-up, sign-in, sessions, passwords   platform/auth/routes.ts
  *   *    /admin/...     users, roles, audit log (admins)        platform/auth/admin.ts
  *   GET  /site          the site's brand                        routes/site.ts
+ *   *    /kb/files/...  knowledge files → draft articles (editors) routes/kb-files.ts
  *   *    /kb/manage/... the knowledge base, for its editors     routes/kb-manage.ts
  *   *    /kb/...        the public help center's data           routes/kb.ts
  *   *    /helpdesk/settings the assistant's settings (its managers) routes/helpdesk-settings.ts
@@ -92,7 +94,8 @@ export const app = new Hono()
   .route('/auth', authRoutes(authSettings))
   .route('/admin', adminRoutes)
   .route('/site', siteRoutes)
-  // `/kb/manage` BEFORE `/kb`, so no manage path is read as a public one.
+  // `/kb/files` and `/kb/manage` BEFORE `/kb`, so no editor path is read as a public one.
+  .route('/kb/files', kbFileRoutes)
   .route('/kb/manage', kbManageRoutes)
   .route('/kb', kbRoutes)
   // Every `/helpdesk/<name>` BEFORE `/helpdesk`, so none of their paths is read as a public one.

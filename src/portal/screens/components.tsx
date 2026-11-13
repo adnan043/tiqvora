@@ -123,6 +123,9 @@ function ButtonsDemo({onToast, confirm}: {onToast: (message: string) => void; co
           <Button variant="link">Link</Button>
           <Button variant="danger">Delete</Button>
           <Button icon="plus">With icon</Button>
+          <Button variant="secondary" icon="upload">
+            Upload a file
+          </Button>
           <Button variant="secondary" iconEnd="chevron-down">
             Options
           </Button>
@@ -264,6 +267,9 @@ function FormsDemo({onSaved}: {onSaved: () => void}) {
               ]}
             />
           </Field>
+          <Field id="kit-file" label="Attachment (a file: input.file-input)" hint="PDF or Word up to 8 MB." optional>
+            <input id="kit-file" type="file" className="file-input" aria-describedby="kit-file-hint" />
+          </Field>
           <div className="full">
             <Field id="f-notes" label="Notes" optional>
               <textarea {...form.field('notes')} rows={3} />
@@ -348,7 +354,7 @@ function DataDemo() {
         </Card>
         <Card title="ProgressBar, DefinitionList">
           <div className="form-stack">
-            <ProgressBar value={62} label="Storage used" />
+            <ProgressBar value={62} label="Storage used: 62%" valueText="6.2 GB of 10 GB used" />
             <DefinitionList
               items={[
                 {label: 'Storage', value: '6.2 GB of 10 GB'},
@@ -516,6 +522,15 @@ function ComposerDemo() {
   const composer = useRef<ComposerHandle>(null);
   // `initialText` + `onTextChange`: a draft kept outside (per ticket on the inbox, with `key`).
   const draft = useRef('');
+  // "Suggest reply": the draft only goes INTO the box (never sent); pending while it is written.
+  const [drafting, setDrafting] = useState(false);
+  const suggest = () => {
+    setDrafting(true);
+    window.setTimeout(() => {
+      setDrafting(false);
+      composer.current?.insert('Hi Maya,\n\nA new lid is on its way today. Our guide on fitting it is linked below.\n\nSam');
+    }, 900);
+  };
   const send = async (text: string, how: ComposerMode) => {
     setPending(true);
     setError(undefined);
@@ -544,9 +559,14 @@ function ComposerDemo() {
         maxLength={600}
         hint="Enter sends, Shift+Enter adds a line. Type “fail” to see an error."
         tools={
-          <Button variant="ghost" size="sm" icon="zap" onClick={() => composer.current?.insert('Thanks for waiting, Maya. ')}>
-            Saved replies
-          </Button>
+          <>
+            <Button variant="ghost" size="sm" icon="sparkles" pending={drafting} pendingLabel="Drafting…" disabled={mode === 'note'} onClick={suggest}>
+              Suggest reply
+            </Button>
+            <Button variant="ghost" size="sm" icon="zap" onClick={() => composer.current?.insert('Thanks for waiting, Maya. ')}>
+              Saved replies
+            </Button>
+          </>
         }
         handle={composer}
         initialText={draft.current}
@@ -705,6 +725,8 @@ function HelpdeskKitDemo() {
           <ConfidenceBadge confidence="low" />
           <ConfidenceBadge confidence="none" />
         </div>
+        {/* newTab: where leaving the page would lose work (a suggested draft in the reply box). */}
+        <CitationList title="Based on (newTab)" newTab items={[{title: 'Returns and replacements', href: '/help/articles/returns-and-replacements/'}]} />
       </Card>
       <Card title="Conversations" description="ConversationListItem: one ticket in the inbox list." flush>
         <ConversationListDemo />
